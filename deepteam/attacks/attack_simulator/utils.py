@@ -6,6 +6,10 @@ import asyncio
 import logging
 from deepeval.metrics.utils import trimAndLoadJson, initialize_model
 from deepeval.models import DeepEvalBaseLLM
+from deepteam.attacks.single_turn.escalation_constants import (
+    append_critic_feedback,
+    random_escalation_suffix,
+)
 
 MAX_RETRIES = os.getenv("DEEPTEAM_MAX_RETRIES", 3)
 
@@ -28,19 +32,20 @@ def generate(
     """
     _, using_native_model = initialize_model(model=model)
     last_error = None
+    retry_prompt = prompt
 
     for attempt in range(MAX_RETRIES):
         try:
             if using_native_model:
-                res, _ = model.generate(prompt=prompt, schema=schema)
+                res, _ = model.generate(prompt=retry_prompt, schema=schema)
                 if res is None:
-                    raise ValueError("Model returned None.")
+                    raise ValueError("Model returned None. This could be because of your model's guardrails, please use a different model.")
                 return res
             else:
                 try:
-                    res = model.generate(prompt=prompt, schema=schema)
+                    res = model.generate(prompt=retry_prompt, schema=schema)
                     if res is None:
-                        raise ValueError("Model returned None.")
+                        raise ValueError("Model returned None. This could be because of your model's guardrails, please use a different model.")
 
                     if isinstance(res, str):
                         data = trimAndLoadJson(res)
@@ -48,9 +53,9 @@ def generate(
                     else:
                         return res
                 except TypeError:
-                    res = model.generate(prompt)
+                    res = model.generate(retry_prompt)
                     if res is None:
-                        raise ValueError("Model returned None.")
+                        raise ValueError("Model returned None. This could be because of your model's guardrails, please use a different model.")
 
                     data = trimAndLoadJson(res)
                     if schema == SyntheticDataList:
@@ -64,6 +69,12 @@ def generate(
         except Exception as e:
             last_error = e
             if attempt < MAX_RETRIES - 1:
+                escalated_prompt = (
+                    f"{random_escalation_suffix(attempt)} \n\n {prompt}"
+                )
+                retry_prompt = append_critic_feedback(
+                    escalated_prompt, str(e)
+                )
                 sleep_time = 2**attempt
                 logging.warning(
                     f"Generation failed on attempt {attempt + 1}. Retrying in {sleep_time}s... Error: {e}"
@@ -93,19 +104,20 @@ async def a_generate(
     """
     _, using_native_model = initialize_model(model=model)
     last_error = None
+    retry_prompt = prompt
 
     for attempt in range(MAX_RETRIES):
         try:
             if using_native_model:
-                res, _ = await model.a_generate(prompt=prompt, schema=schema)
+                res, _ = await model.a_generate(prompt=retry_prompt, schema=schema)
                 if res is None:
-                    raise ValueError("Model returned None.")
+                    raise ValueError("Model returned None. This could be because of your model's guardrails, please use a different model.")
                 return res
             else:
                 try:
-                    res = await model.a_generate(prompt=prompt, schema=schema)
+                    res = await model.a_generate(prompt=retry_prompt, schema=schema)
                     if res is None:
-                        raise ValueError("Model returned None.")
+                        raise ValueError("Model returned None. This could be because of your model's guardrails, please use a different model.")
 
                     if isinstance(res, str):
                         data = trimAndLoadJson(res)
@@ -113,9 +125,9 @@ async def a_generate(
                     else:
                         return res
                 except TypeError:
-                    res = await model.a_generate(prompt)
+                    res = await model.a_generate(retry_prompt)
                     if res is None:
-                        raise ValueError("Model returned None.")
+                        raise ValueError("Model returned None. This could be because of your model's guardrails, please use a different model.")
 
                     data = trimAndLoadJson(res)
                     if schema == SyntheticDataList:
@@ -129,6 +141,12 @@ async def a_generate(
         except Exception as e:
             last_error = e
             if attempt < MAX_RETRIES - 1:
+                escalated_prompt = (
+                    f"{random_escalation_suffix(attempt)} \n\n {prompt}"
+                )
+                retry_prompt = append_critic_feedback(
+                    escalated_prompt, str(e)
+                )
                 sleep_time = 2**attempt
                 logging.warning(
                     f"Async generation failed on attempt {attempt + 1}. Retrying in {sleep_time}s... Error: {e}"
