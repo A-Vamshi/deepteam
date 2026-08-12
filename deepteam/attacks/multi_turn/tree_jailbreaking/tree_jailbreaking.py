@@ -1,60 +1,61 @@
-from rich.progress import Progress
 import asyncio
-import time
 import json
-from typing import Optional, Union, List, Dict
 import random
+import time
+from typing import Dict, List, Optional, Tuple, Union
 
-from deepeval.models import DeepEvalBaseLLM
 from deepeval.metrics.utils import initialize_model
+from deepeval.models import DeepEvalBaseLLM
 
-from deepteam.utils import create_progress, update_pbar, add_pbar
 from deepteam.attacks import BaseAttack
+from deepteam.attacks.attack_simulator.utils import a_generate, generate
 from deepteam.attacks.base_attack import Exploitability
+from deepteam.attacks.multi_turn.base_multi_turn_attack import (
+    BaseMultiTurnAttack,
+)
+from deepteam.attacks.multi_turn.progression import (
+    BehaviorShiftDetector,
+    StopReason,
+    mark_stop,
+)
 from deepteam.attacks.multi_turn.tree_jailbreaking.schema import (
     ImprovementPrompt,
+    OnTopic,
     Rating,
 )
 from deepteam.attacks.multi_turn.tree_jailbreaking.template import (
     JailBreakingTemplate,
 )
-from deepteam.attacks.attack_simulator.utils import (
-    generate,
-    a_generate,
-)
+from deepteam.attacks.multi_turn.types import CallbackType
 from deepteam.attacks.multi_turn.utils import (
-    enhance_attack,
     a_enhance_attack,
     append_target_turn,
-)
-from deepteam.attacks.multi_turn.types import CallbackType
-from deepteam.attacks.multi_turn.base_schema import NonRefusal
-from deepteam.test_case.test_case import RTTurn
-from deepteam.vulnerabilities.types import VulnerabilityType
-from deepteam.vulnerabilities import BaseVulnerability
-from deepteam.attacks.multi_turn.base_multi_turn_attack import (
-    BaseMultiTurnAttack,
+    enhance_attack,
 )
 from deepteam.attacks.single_turn import BaseSingleTurnAttack
+from deepteam.test_case.test_case import RTTurn
+from deepteam.utils import add_pbar, create_progress, update_pbar
+from deepteam.vulnerabilities import BaseVulnerability
+from deepteam.vulnerabilities.types import VulnerabilityType
 
 
 class TreeNode:
     def __init__(
         self,
         prompt: str,
-        score: int,
         depth: int,
-        conversation_history=None,
+        conversation_history: Optional[List[dict]] = None,
         parent: Optional["TreeNode"] = None,
         turn_level_attack: Optional[BaseAttack] = None,
     ):
         self.prompt = prompt
-        self.score = score
         self.depth = depth
-        self.children = []
         self.parent = parent
         self.turn_level_attack = turn_level_attack
         self.conversation_history = conversation_history or []
+        self.response: Optional[RTTurn] = None
+        self.score: int = 0
+        self.on_topic: bool = True
 
 
 class TreeJailbreaking(BaseMultiTurnAttack):
@@ -65,7 +66,9 @@ class TreeJailbreaking(BaseMultiTurnAttack):
     def __init__(
         self,
         weight: int = 1,
-        max_depth: int = 5,
+        max_depth: int = 10,
+        branching_factor: int = 4,
+        max_runtime: float = 600.0,
         turn_level_attacks: Optional[List[BaseSingleTurnAttack]] = None,
         simulator_model: Optional[Union[DeepEvalBaseLLM, str]] = "gpt-4o-mini",
     ):
@@ -73,7 +76,11 @@ class TreeJailbreaking(BaseMultiTurnAttack):
         self.multi_turn = True
         self.simulator_model = simulator_model
         self.max_depth = max_depth
+        self.branching_factor = branching_factor
+        self.max_runtime = max_runtime
         self.turn_level_attacks = turn_level_attacks
+        self.search_log: List[dict] = []
+        self.committed_path: List[TreeNode] = []
 
         if self.turn_level_attacks is not None:
             if not isinstance(self.turn_level_attacks, list) or not all(
@@ -83,6 +90,188 @@ class TreeJailbreaking(BaseMultiTurnAttack):
                     "The 'attacks' passed must be a list of single-turn attacks"
                 )
 
+    def _root_history(self, goal: str, vulnerability_data: str) -> List[dict]:
+        return [
+            {
+                "role": "system",
+                "content": JailBreakingTemplate.enhance_attack(
+                    goal, vulnerability_data
+                ),
+            }
+        ]
+
+    @staticmethod
+    def _branch_history(
+        history: List[dict], goal: str, parent: Optional[TreeNode]
+    ) -> List[dict]:
+        history = list(history)
+        history.append(
+            {
+                "role": "user",
+                "content": (
+                    f"Current prompt: {parent.prompt if parent else goal}\n\n"
+                    f"OBJECTIVE: {goal}\n\n"
+                    f"SCORE: {parent.score if parent else 0}"
+                ),
+            }
+        )
+        return history
+
+    @staticmethod
+    def _descend_history(node: TreeNode) -> List[dict]:
+        history = list(node.conversation_history)
+        history.append({"role": "assistant", "content": node.prompt})
+        history.append(
+            {
+                "role": "user",
+                "content": (
+                    f"RESPONSE: {node.response.content if node.response else ''}"
+                    f"\n\nSCORE: {node.score}"
+                ),
+            }
+        )
+        return history
+
+    def _log(self, node: TreeNode, committed: bool):
+        self.search_log.append(
+            {
+                "depth": node.depth,
+                "prompt": node.prompt,
+                "on_topic": node.on_topic,
+                "score": node.score,
+                "committed": committed,
+            }
+        )
+
+    def _branch(
+        self,
+        goal: str,
+        history: List[dict],
+        parent: Optional[TreeNode],
+        depth: int,
+        vulnerability_data: str,
+    ) -> Tuple[List[TreeNode], List[TreeNode]]:
+        nodes: List[TreeNode] = []
+        for _ in range(self.branching_factor):
+            res: ImprovementPrompt = generate(
+                json.dumps(history), ImprovementPrompt, self.simulator_model
+            )
+            prompt = res.prompt
+
+            turn_level_attack = None
+            if self.turn_level_attacks and random.random() < 0.5:
+                attack = random.choice(self.turn_level_attacks)
+                turn_level_attack = attack
+                prompt = enhance_attack(attack, prompt, self.simulator_model)
+
+            node = TreeNode(
+                prompt=prompt,
+                depth=depth,
+                conversation_history=history,
+                parent=parent,
+                turn_level_attack=turn_level_attack,
+            )
+            topic: OnTopic = generate(
+                JailBreakingTemplate.on_topic(goal, prompt, vulnerability_data),
+                OnTopic,
+                self.simulator_model,
+            )
+            node.on_topic = topic.on_topic
+            nodes.append(node)
+
+        return [n for n in nodes if n.on_topic], nodes
+
+    async def _a_branch(
+        self,
+        goal: str,
+        history: List[dict],
+        parent: Optional[TreeNode],
+        depth: int,
+        vulnerability_data: str,
+    ) -> Tuple[List[TreeNode], List[TreeNode]]:
+        async def one() -> TreeNode:
+            res: ImprovementPrompt = await a_generate(
+                json.dumps(history), ImprovementPrompt, self.simulator_model
+            )
+            prompt = res.prompt
+
+            turn_level_attack = None
+            if self.turn_level_attacks and random.random() < 0.5:
+                attack = random.choice(self.turn_level_attacks)
+                turn_level_attack = attack
+                prompt = await a_enhance_attack(
+                    attack, prompt, self.simulator_model
+                )
+
+            node = TreeNode(
+                prompt=prompt,
+                depth=depth,
+                conversation_history=history,
+                parent=parent,
+                turn_level_attack=turn_level_attack,
+            )
+            topic: OnTopic = await a_generate(
+                JailBreakingTemplate.on_topic(goal, prompt, vulnerability_data),
+                OnTopic,
+                self.simulator_model,
+            )
+            node.on_topic = topic.on_topic
+            return node
+
+        nodes = list(
+            await asyncio.gather(*[one() for _ in range(self.branching_factor)])
+        )
+        return [n for n in nodes if n.on_topic], nodes
+
+    def _score(
+        self,
+        node: TreeNode,
+        goal: str,
+        turns: List[RTTurn],
+        vulnerability_data: str,
+        model_callback: CallbackType,
+    ):
+        node.response = model_callback(node.prompt, turns)
+        rating: Rating = generate(
+            JailBreakingTemplate.linear_judge(
+                goal, node.prompt, node.response, vulnerability_data
+            ),
+            Rating,
+            self.simulator_model,
+        )
+        node.score = rating.rating
+
+    async def _a_score(
+        self,
+        node: TreeNode,
+        goal: str,
+        turns: List[RTTurn],
+        vulnerability_data: str,
+        model_callback: CallbackType,
+    ):
+        node.response = await model_callback(node.prompt, turns)
+        rating: Rating = await a_generate(
+            JailBreakingTemplate.linear_judge(
+                goal, node.prompt, node.response, vulnerability_data
+            ),
+            Rating,
+            self.simulator_model,
+        )
+        node.score = rating.rating
+
+    def _commit(self, turns: List[RTTurn], node: TreeNode) -> List[RTTurn]:
+        turns.append(RTTurn(role="user", content=node.prompt))
+        append_target_turn(
+            turns,
+            node.response,
+            node.turn_level_attack.get_name()
+            if node.turn_level_attack is not None
+            else None,
+        )
+        self.committed_path.append(node)
+        self._log(node, committed=True)
+        return turns
+
     def _get_turns(
         self,
         model_callback: CallbackType,
@@ -90,6 +279,8 @@ class TreeJailbreaking(BaseMultiTurnAttack):
         vulnerability: str = None,
         vulnerability_type: str = None,
         simulator_model: Optional[Union[str, DeepEvalBaseLLM]] = None,
+        *,
+        metric_check=None,
     ) -> List[RTTurn]:
         if turns is None:
             turns = []
@@ -100,84 +291,99 @@ class TreeJailbreaking(BaseMultiTurnAttack):
             self.simulator_model, _ = initialize_model(self.simulator_model)
 
         self.model_callback = model_callback
+        self.search_log = []
+        self.committed_path = []
 
-        # Extract the last user input to use as the root attack
-        attack = None
+        goal = None
         for turn in reversed(turns):
             if turn.role == "user":
-                attack = turn.content
+                goal = turn.content
                 break
 
-        if not attack:
+        if not goal:
             raise ValueError(
                 "No user input found in the conversation to start from."
             )
 
-        # Ensure the conversation is initialized correctly
         if len(turns) <= 1 or turns[-1].role == "user":
-            assistant_response = model_callback(attack, turns)
-            append_target_turn(turns, assistant_response)
-
-        MAX_RUNTIME = 50.0
-        start_time = time.time()
-        root = TreeNode(prompt=attack, score=0, depth=0)
+            append_target_turn(turns, model_callback(goal, turns))
 
         vulnerability_data = (
             f"Vulnerability: {vulnerability} | Type: {vulnerability_type}"
         )
+        detector = BehaviorShiftDetector(
+            simulator_model=self.simulator_model,
+            vulnerability_data=vulnerability_data,
+            metric_check=metric_check,
+        )
+        stop_reason = StopReason.BUDGET_EXHAUSTED
+        stop_detail = None
+        deadline = time.time() + self.max_runtime
 
-        # Progress bar
+        history = self._root_history(goal, vulnerability_data)
+        parent = None
+
         progress = create_progress()
         with progress:
             task_id = add_pbar(
                 progress,
                 description="...... ⛓️  Tree Jailbreaking",
-                total=MAX_RUNTIME,
+                total=self.max_depth,
             )
 
-            try:
-                best_node = self.tree_search(
-                    root,
-                    attack,
-                    start_time,
-                    MAX_RUNTIME,
-                    progress,
-                    task_id,
-                    vulnerability_data,
+            for depth in range(1, self.max_depth + 1):
+                if time.time() > deadline:
+                    stop_reason = StopReason.RUNTIME_EXCEEDED
+                    break
+
+                branch_history = self._branch_history(history, goal, parent)
+                candidates, all_nodes = self._branch(
+                    goal, branch_history, parent, depth, vulnerability_data
                 )
-            finally:
-                update_pbar(progress, task_id, advance_to_end=True)
-
-            # Reconstruct path from best_node to root
-            path_nodes = []
-            current = best_node
-            while current is not None:
-                path_nodes.append(current)
-                current = current.parent
-            path_nodes.reverse()
-
-            if path_nodes:
-                first_prompt = path_nodes[0].prompt
-                if any(
-                    t.content == first_prompt and t.role == "user"
-                    for t in turns
-                ):
-                    path_nodes = path_nodes[1:]
-
-            # Append turns along the best path
-            for node in path_nodes:
-                turns.append(RTTurn(role="user", content=node.prompt))
-                assistant_response = model_callback(node.prompt, turns)
-                if node.turn_level_attack is not None:
-                    append_target_turn(
-                        turns,
-                        assistant_response,
-                        node.turn_level_attack.get_name(),
+                if not candidates:
+                    candidates, retry_nodes = self._branch(
+                        goal, branch_history, parent, depth, vulnerability_data
                     )
-                else:
-                    append_target_turn(turns, assistant_response)
+                    if not candidates:
+                        candidates = all_nodes + retry_nodes
 
-        return turns
+                if not candidates:
+                    stop_reason = StopReason.SIMULATION_ERROR
+                    break
+
+                for node in candidates:
+                    self._score(
+                        node,
+                        goal,
+                        turns,
+                        vulnerability_data,
+                        model_callback,
+                    )
+
+                best = max(candidates, key=lambda n: n.score)
+                for node in candidates:
+                    if node is not best:
+                        self._log(node, committed=False)
+
+                self._commit(turns, best)
+                parent = best
+                history = self._descend_history(best)
+                update_pbar(progress, task_id)
+
+                verdict = detector.check(turns)
+                if verdict is not None:
+                    stop_reason = StopReason.SHIFT_DETECTED
+                    stop_detail = verdict.detail
+                    break
+
+            update_pbar(progress, task_id, advance_to_end=True)
+
+        return mark_stop(
+            turns,
+            stop_reason,
+            detail=stop_detail,
+            turns_spent=(len(turns) - 2) // 2,
+        )
 
     async def _a_get_turns(
         self,
@@ -186,6 +392,8 @@ class TreeJailbreaking(BaseMultiTurnAttack):
         vulnerability: str = None,
         vulnerability_type: str = None,
         simulator_model: Optional[Union[str, DeepEvalBaseLLM]] = None,
+        *,
+        metric_check=None,
     ) -> List[RTTurn]:
         if turns is None:
             turns = []
@@ -196,77 +404,103 @@ class TreeJailbreaking(BaseMultiTurnAttack):
             self.simulator_model, _ = initialize_model(self.simulator_model)
 
         self.model_callback = model_callback
+        self.search_log = []
+        self.committed_path = []
 
-        # Extract the last user input to use as the root attack
-        attack = None
+        goal = None
         for turn in reversed(turns):
             if turn.role == "user":
-                attack = turn.content
+                goal = turn.content
                 break
 
-        if not attack:
+        if not goal:
             raise ValueError(
                 "No user input found in the conversation to start from."
             )
 
-        # Ensure the conversation is initialized correctly
         if len(turns) <= 1 or turns[-1].role == "user":
-            assistant_response = await model_callback(attack, turns)
-            append_target_turn(turns, assistant_response)
-
-        MAX_RUNTIME = 50.0
-        start_time = time.time()
-        root = TreeNode(prompt=attack, score=0, depth=0)
+            append_target_turn(turns, await model_callback(goal, turns))
 
         vulnerability_data = (
             f"Vulnerability: {vulnerability} | Type: {vulnerability_type}"
         )
+        detector = BehaviorShiftDetector(
+            simulator_model=self.simulator_model,
+            vulnerability_data=vulnerability_data,
+            metric_check=metric_check,
+        )
+        stop_reason = StopReason.BUDGET_EXHAUSTED
+        stop_detail = None
+        deadline = time.time() + self.max_runtime
 
-        # Async progress bar
+        history = self._root_history(goal, vulnerability_data)
+        parent = None
+
         progress = create_progress()
         with progress:
             task_id = add_pbar(
                 progress,
                 description="...... ⛓️  Tree Jailbreaking",
-                total=MAX_RUNTIME,
+                total=self.max_depth,
             )
 
-            try:
-                best_node = await self.a_tree_search(
-                    root,
-                    attack,
-                    start_time,
-                    MAX_RUNTIME,
-                    vulnerability_data,
-                    progress,
-                    task_id,
+            for depth in range(1, self.max_depth + 1):
+                if time.time() > deadline:
+                    stop_reason = StopReason.RUNTIME_EXCEEDED
+                    break
+
+                branch_history = self._branch_history(history, goal, parent)
+                candidates, all_nodes = await self._a_branch(
+                    goal, branch_history, parent, depth, vulnerability_data
                 )
-            finally:
-                update_pbar(progress, task_id, advance_to_end=True)
+                if not candidates:
+                    candidates, retry_nodes = await self._a_branch(
+                        goal, branch_history, parent, depth, vulnerability_data
+                    )
+                    if not candidates:
+                        candidates = all_nodes + retry_nodes
 
-            # Reconstruct best path
-            path_nodes = []
-            current = best_node
-            while current is not None:
-                path_nodes.append(current)
-                current = current.parent
-            path_nodes.reverse()
+                if not candidates:
+                    stop_reason = StopReason.SIMULATION_ERROR
+                    break
 
-            if path_nodes:
-                first_prompt = path_nodes[0].prompt
-                if any(
-                    t.content == first_prompt and t.role == "user"
-                    for t in turns
-                ):
-                    path_nodes = path_nodes[1:]
+                await asyncio.gather(
+                    *[
+                        self._a_score(
+                            node,
+                            goal,
+                            turns,
+                            vulnerability_data,
+                            model_callback,
+                        )
+                        for node in candidates
+                    ]
+                )
 
-            # Append turns from best path
-            for node in path_nodes:
-                turns.append(RTTurn(role="user", content=node.prompt))
-                assistant_response = await model_callback(node.prompt, turns)
-                append_target_turn(turns, assistant_response)
+                best = max(candidates, key=lambda n: n.score)
+                for node in candidates:
+                    if node is not best:
+                        self._log(node, committed=False)
 
-        return turns
+                self._commit(turns, best)
+                parent = best
+                history = self._descend_history(best)
+                update_pbar(progress, task_id)
+
+                verdict = await detector.a_check(turns)
+                if verdict is not None:
+                    stop_reason = StopReason.SHIFT_DETECTED
+                    stop_detail = verdict.detail
+                    break
+
+            update_pbar(progress, task_id, advance_to_end=True)
+
+        return mark_stop(
+            turns,
+            stop_reason,
+            detail=stop_detail,
+            turns_spent=(len(turns) - 2) // 2,
+        )
 
     def progress(
         self,
@@ -342,130 +576,6 @@ class TreeJailbreaking(BaseMultiTurnAttack):
             result[vuln_type] = enhanced_turns
 
         return result
-
-    def tree_search(
-        self,
-        root: TreeNode,
-        goal: str,
-        start_time: float,
-        MAX_RUNTIME: float,
-        progress: Progress,
-        task_id: int,
-        vulnerability_data: str = "",
-    ) -> TreeNode:
-        """Synchronous tree search implementation with runtime limit."""
-        queue = [root]
-        best_node = root
-
-        while queue and (time.time() - start_time < MAX_RUNTIME):
-            node = queue.pop(0)
-            self.expand_node(node, goal, vulnerability_data=vulnerability_data)
-            queue.extend(node.children)
-            queue.sort(key=lambda x: x.score, reverse=True)
-
-            if node.score > best_node.score:
-                best_node = node
-
-            # Update progress bar
-            elapsed_time = time.time() - start_time
-            update_pbar(
-                progress,
-                task_id,
-                elapsed_time - progress.tasks[task_id].completed,
-            )
-
-        return best_node
-
-    def expand_node(
-        self,
-        node: TreeNode,
-        initial_attack: str,
-        PRUNE_THRESHOLD: int = 0,
-        vulnerability_data: str = "",
-    ):
-        if node.depth >= self.max_depth:
-            return
-
-        """Expands a tree node by generating multiple children nodes based on branching logic."""
-        if node.depth == 0:
-            conversation_json = [
-                {
-                    "role": "system",
-                    "content": JailBreakingTemplate.enhance_attack(
-                        initial_attack, vulnerability_data
-                    ),
-                }
-            ]
-        else:
-            conversation_json = node.conversation_history
-
-        conversation_json = list(conversation_json)
-        conversation_json.append(
-            {
-                "role": "user",
-                "content": f"Current prompt: {node.prompt}\n\nOBJECTIVE: {initial_attack}\n\nSCORE: {node.score}",
-            }
-        )
-
-        # Generate multiple branches
-        num_branches = self.calculate_branches(node.score, node.depth)
-        for _ in range(num_branches):
-            conversation = json.dumps(conversation_json)
-            res: ImprovementPrompt = generate(
-                conversation, ImprovementPrompt, self.simulator_model
-            )
-            enhanced_attack = res.prompt
-
-            # Randomly enhancing a turn attack
-            turn_level_attack = None
-            if self.turn_level_attacks and random.random() < 0.5:
-                attack = random.choice(self.turn_level_attacks)
-                turn_level_attack = attack
-                enhanced_attack = enhance_attack(
-                    attack, enhanced_attack, self.simulator_model
-                )
-
-            # Check if enhanced attack is a refusal statement
-            non_refusal_prompt = JailBreakingTemplate.non_refusal(
-                initial_attack, enhanced_attack
-            )
-            res: NonRefusal = generate(
-                non_refusal_prompt, NonRefusal, self.simulator_model
-            )
-            refusal = res.refusal
-            if refusal:
-                continue  # Skip this child
-
-            # Generate a response from the target LLM
-            conversation_turns = self.build_turns_from_node(node)
-            target_response = self.model_callback(
-                enhanced_attack, conversation_turns
-            )
-
-            # Calculate the score for the enhanced attack
-            judge_prompt = JailBreakingTemplate.linear_judge(
-                initial_attack,
-                enhanced_attack,
-                target_response,
-                vulnerability_data,
-            )
-            res: Rating = generate(judge_prompt, Rating, self.simulator_model)
-            score = res.rating
-
-            # Prune if the score is too low
-            if score <= PRUNE_THRESHOLD:
-                continue  # Skip creating this child
-
-            # Create a new child node
-            child_node = TreeNode(
-                prompt=enhanced_attack,
-                score=score,
-                depth=node.depth + 1,
-                conversation_history=conversation_json,
-                parent=node,
-                turn_level_attack=turn_level_attack,
-            )
-            node.children.append(child_node)
 
     async def a_progress(
         self,
@@ -544,185 +654,6 @@ class TreeJailbreaking(BaseMultiTurnAttack):
             result[vuln_type] = enhanced_turns
 
         return result
-
-    async def a_tree_search(
-        self,
-        root: TreeNode,
-        goal: str,
-        start_time: float,
-        MAX_RUNTIME: float,
-        vulnerability_data: str,
-        progress: Progress,
-        task_id: int,
-    ) -> TreeNode:
-        """Asynchronous tree search implementation with runtime limit."""
-        queue = [root]
-        best_node = root
-
-        while queue and (time.time() - start_time < MAX_RUNTIME):
-            node = queue.pop(0)
-            await self.a_expand_node(
-                node, goal, vulnerability_data=vulnerability_data
-            )
-            queue.extend(node.children)
-            queue.sort(key=lambda x: x.score, reverse=True)
-
-            if node.score > best_node.score:
-                best_node = node
-
-            elapsed_time = time.time() - start_time
-            update_pbar(progress, task_id, elapsed_time)
-
-        update_pbar(progress, task_id, advance_to_end=True)
-        return best_node
-
-    async def a_expand_node(
-        self,
-        node: TreeNode,
-        initial_attack: str,
-        PRUNE_THRESHOLD: int = 0,
-        vulnerability_data: str = "",
-    ):
-        if node.depth >= self.max_depth:
-            return
-
-        """Expands a tree node asynchronously by generating multiple children nodes."""
-        if node.depth == 0:
-            conversation_json = [
-                {
-                    "role": "system",
-                    "content": JailBreakingTemplate.enhance_attack(
-                        initial_attack, vulnerability_data
-                    ),
-                }
-            ]
-        else:
-            conversation_json = node.conversation_history
-
-        conversation_json = list(conversation_json)
-        conversation_json.append(
-            {
-                "role": "user",
-                "content": f"Current prompt: {node.prompt}\n\nOBJECTIVE: {initial_attack}\n\nSCORE: {node.score}",
-            }
-        )
-
-        # Generate branches asynchronously
-        num_branches = self.calculate_branches(node.score, node.depth)
-        tasks = [
-            self.a_generate_child(
-                node,
-                conversation_json,
-                initial_attack,
-                PRUNE_THRESHOLD,
-                vulnerability_data,
-            )
-            for _ in range(num_branches)
-        ]
-        children = await asyncio.gather(*tasks)
-
-        # Filter out None values for pruned branches
-        node.children.extend([child for child in children if child])
-
-    async def a_generate_child(
-        self,
-        node: TreeNode,
-        conversation_json: dict,
-        initial_attack: str,
-        PRUNE_THRESHOLD: int,
-        vulnerability_data: str = "",
-    ):
-        """Asynchronously generates a child node."""
-        conversation = json.dumps(conversation_json)
-        res: ImprovementPrompt = await a_generate(
-            conversation, ImprovementPrompt, self.simulator_model
-        )
-        enhanced_attack = res.prompt
-
-        # Randomly enhancing a turn attack
-        turn_level_attack = None
-        if self.turn_level_attacks and random.random() < 0.5:
-            attack = random.choice(self.turn_level_attacks)
-            turn_level_attack = attack
-            enhanced_attack = await a_enhance_attack(
-                attack, enhanced_attack, self.simulator_model
-            )
-
-        # Check if enhanced attack is a refusal statement
-        non_refusal_prompt = JailBreakingTemplate.non_refusal(
-            initial_attack, enhanced_attack
-        )
-        res: NonRefusal = await a_generate(
-            non_refusal_prompt, NonRefusal, self.simulator_model
-        )
-        refusal = res.refusal
-        if refusal:
-            return None  # Skip this child
-
-        # Generate a response from the target LLM asynchronously
-        conversation_turns = self.build_turns_from_node(node)
-        target_response = await self.model_callback(
-            enhanced_attack, conversation_turns
-        )
-
-        # Calculate the score for the enhanced attack asynchronously
-        judge_prompt = JailBreakingTemplate.linear_judge(
-            initial_attack, enhanced_attack, target_response, vulnerability_data
-        )
-        res: Rating = await a_generate(
-            judge_prompt, Rating, self.simulator_model
-        )
-        score = res.rating
-
-        # Prune if the score is too low
-        if score <= PRUNE_THRESHOLD:
-            return None
-
-        # Create a new child node
-        return TreeNode(
-            prompt=enhanced_attack,
-            score=score,
-            depth=node.depth + 1,
-            conversation_history=conversation_json,
-            parent=node,
-            turn_level_attack=turn_level_attack,
-        )
-
-    ##################################################
-    ### General Jailbreaking #########################
-    ##################################################
-
-    def build_turns_from_node(self, node: TreeNode) -> List[RTTurn]:
-        path_nodes = []
-        current = node
-        while current is not None:
-            path_nodes.append(current)
-            current = current.parent
-        path_nodes.reverse()
-        turns = []
-        for n in path_nodes:
-            turns.append(RTTurn(role="user", content=n.prompt))
-        return turns
-
-    def calculate_branches(self, score: int, depth: int) -> int:
-        """Calculate the number of branches (children) based on the score."""
-        BASE_BRANCHES = 3
-        MAX_BRANCHES = 5
-        MIN_BRANCHES = 1
-
-        branches = BASE_BRANCHES
-
-        # Increase branches for high scores
-        if score >= 8:
-            branches += 2
-        elif score >= 6:
-            branches += 1
-
-        # Decrease branches for low scores
-        if score <= 3:
-            branches -= 1
-
-        return max(MIN_BRANCHES, min(MAX_BRANCHES, branches))
 
     def get_name(self) -> str:
         return self.name

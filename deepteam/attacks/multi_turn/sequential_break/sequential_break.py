@@ -34,7 +34,11 @@ from deepteam.attacks.multi_turn.utils import (
     append_target_turn,
 )
 from deepteam.attacks.multi_turn.types import CallbackType
-from deepteam.attacks.multi_turn.base_schema import NonRefusal
+from deepteam.attacks.multi_turn.progression import (
+    BehaviorShiftDetector,
+    StopReason,
+    mark_stop,
+)
 from deepteam.test_case.test_case import RTTurn
 from deepteam.vulnerabilities.types import VulnerabilityType
 from deepteam.vulnerabilities import BaseVulnerability
@@ -89,6 +93,8 @@ class SequentialJailbreak(BaseMultiTurnAttack):
         vulnerability: str = None,
         vulnerability_type: str = None,
         simulator_model: Optional[Union[str, DeepEvalBaseLLM]] = None,
+        *,
+        metric_check=None,
     ) -> List[RTTurn]:
         if turns is None:
             turns = []
@@ -98,6 +104,9 @@ class SequentialJailbreak(BaseMultiTurnAttack):
         else:
             self.simulator_model, _ = initialize_model(self.simulator_model)
         self.model_callback = model_callback
+
+        stop_reason = StopReason.BUDGET_EXHAUSTED
+        stop_detail = None
 
         progress = create_progress()
         with progress:
@@ -109,6 +118,11 @@ class SequentialJailbreak(BaseMultiTurnAttack):
 
             vulnerability_data = (
                 f"Vulnerability: {vulnerability} | Type: {vulnerability_type}"
+            )
+            detector = BehaviorShiftDetector(
+                simulator_model=self.simulator_model,
+                vulnerability_data=vulnerability_data,
+                metric_check=metric_check,
             )
 
             # Get base attack from last user turn (simple reverse search)
@@ -125,13 +139,8 @@ class SequentialJailbreak(BaseMultiTurnAttack):
 
             # If the last turn is from user, we need a model response before simulation
             if len(turns) <= 1 or turns[-1].role == "user":
-                target_response = model_callback(base_attack, turns)
-                append_target_turn(turns, target_response)
-            else:
-                target_response = turns[-1].content
+                append_target_turn(turns, model_callback(base_attack, turns))
 
-            eval_flag = False
-            eval_percentage = 0
             previous_template = None
             previous_assistant_response = None
 
@@ -262,15 +271,14 @@ class SequentialJailbreak(BaseMultiTurnAttack):
                 else:
                     append_target_turn(turns, assistant_response)
 
-                non_refusal_prompt = SequentialBreakTemplate.non_refusal(
-                    rewritten_attack, assistant_response.content
-                )
-                non_refusal_res: NonRefusal = generate(
-                    non_refusal_prompt, NonRefusal, self.simulator_model
-                )
-                if non_refusal_res.refusal:
+                update_pbar(progress, task_id)
+
+                verdict = detector.check(turns)
+                if verdict is not None:
+                    stop_reason = StopReason.SHIFT_DETECTED
+                    stop_detail = verdict.detail
                     update_pbar(progress, task_id, advance_to_end=True)
-                    return turns
+                    break
 
                 # Monitor and evaluate model outputs
                 if self.attack_type == "question_bank":
@@ -283,8 +291,6 @@ class SequentialJailbreak(BaseMultiTurnAttack):
                     judge_res: QuestionBankJudge = generate(
                         judge_prompt, QuestionBankJudge, self.simulator_model
                     )
-                    eval_flag = judge_res.harmful
-                    eval_percentage = getattr(judge_res, "score", 0)
                 elif self.attack_type == "game_environment":
                     judge_prompt = (
                         SequentialBreakTemplate.game_environment_judge(
@@ -297,8 +303,6 @@ class SequentialJailbreak(BaseMultiTurnAttack):
                     judge_res: GameEnvironmentJudge = generate(
                         judge_prompt, GameEnvironmentJudge, self.simulator_model
                     )
-                    eval_flag = judge_res.harmful
-                    eval_percentage = getattr(judge_res, "score", 0)
                 else:
                     judge_prompt = SequentialBreakTemplate.dialogue_judge(
                         original_attack,
@@ -309,17 +313,6 @@ class SequentialJailbreak(BaseMultiTurnAttack):
                     judge_res: DialogueJudge = generate(
                         judge_prompt, DialogueJudge, self.simulator_model
                     )
-                    eval_flag = judge_res.harmful
-                    eval_percentage = getattr(judge_res, "score", 0)
-
-                # Stop when harmful response is generated
-                if eval_flag:
-                    update_pbar(progress, task_id, advance_to_end=True)
-                    return turns
-
-                if eval_percentage and eval_percentage >= 80:
-                    update_pbar(progress, task_id, advance_to_end=True)
-                    return turns
 
                 # Escalate: Improve the base attack for next iteration (gradually introduce more specificity)
                 judge_feedback = f"Harmful: {judge_res.harmful}"
@@ -351,9 +344,12 @@ class SequentialJailbreak(BaseMultiTurnAttack):
                 previous_template = rewritten_attack
                 previous_assistant_response = assistant_response.content
 
-                update_pbar(progress, task_id)
-
-        return turns
+        return mark_stop(
+            turns,
+            stop_reason,
+            detail=stop_detail,
+            turns_spent=(len(turns) - 2) // 2,
+        )
 
     async def _a_get_turns(
         self,
@@ -362,6 +358,8 @@ class SequentialJailbreak(BaseMultiTurnAttack):
         vulnerability: str = None,
         vulnerability_type: str = None,
         simulator_model: Optional[Union[str, DeepEvalBaseLLM]] = None,
+        *,
+        metric_check=None,
     ) -> List[RTTurn]:
         if turns is None:
             turns = []
@@ -371,6 +369,9 @@ class SequentialJailbreak(BaseMultiTurnAttack):
         else:
             self.simulator_model, _ = initialize_model(self.simulator_model)
         self.model_callback = model_callback
+
+        stop_reason = StopReason.BUDGET_EXHAUSTED
+        stop_detail = None
 
         # Progress bar setup
         progress = create_progress()
@@ -383,6 +384,11 @@ class SequentialJailbreak(BaseMultiTurnAttack):
 
             vulnerability_data = (
                 f"Vulnerability: {vulnerability} | Type: {vulnerability_type}"
+            )
+            detector = BehaviorShiftDetector(
+                simulator_model=self.simulator_model,
+                vulnerability_data=vulnerability_data,
+                metric_check=metric_check,
             )
 
             # Get base attack from last user turn (simple reverse search)
@@ -399,13 +405,10 @@ class SequentialJailbreak(BaseMultiTurnAttack):
 
             # If last turn is user, generate a model response before the loop
             if len(turns) <= 1 or turns[-1].role == "user":
-                target_response = await model_callback(base_attack, turns)
-                append_target_turn(turns, target_response)
-            else:
-                target_response = turns[-1].content
+                append_target_turn(
+                    turns, await model_callback(base_attack, turns)
+                )
 
-            eval_flag = False
-            eval_percentage = 0
             previous_template = None
             previous_assistant_response = None
 
@@ -542,15 +545,14 @@ class SequentialJailbreak(BaseMultiTurnAttack):
                 else:
                     append_target_turn(turns, assistant_response)
 
-                non_refusal_prompt = SequentialBreakTemplate.non_refusal(
-                    rewritten_attack, assistant_response.content
-                )
-                non_refusal_res: NonRefusal = await a_generate(
-                    non_refusal_prompt, NonRefusal, self.simulator_model
-                )
-                if non_refusal_res.refusal:
+                update_pbar(progress, task_id)
+
+                verdict = await detector.a_check(turns)
+                if verdict is not None:
+                    stop_reason = StopReason.SHIFT_DETECTED
+                    stop_detail = verdict.detail
                     update_pbar(progress, task_id, advance_to_end=True)
-                    return turns
+                    break
 
                 # Monitor and evaluate model outputs
                 if self.attack_type == "question_bank":
@@ -563,7 +565,6 @@ class SequentialJailbreak(BaseMultiTurnAttack):
                     judge_res: QuestionBankJudge = await a_generate(
                         judge_prompt, QuestionBankJudge, self.simulator_model
                     )
-                    eval_flag = judge_res.harmful
                 elif self.attack_type == "game_environment":
                     judge_prompt = (
                         SequentialBreakTemplate.game_environment_judge(
@@ -576,7 +577,6 @@ class SequentialJailbreak(BaseMultiTurnAttack):
                     judge_res: GameEnvironmentJudge = await a_generate(
                         judge_prompt, GameEnvironmentJudge, self.simulator_model
                     )
-                    eval_flag = judge_res.harmful
                 else:
                     judge_prompt = SequentialBreakTemplate.dialogue_judge(
                         original_attack,
@@ -587,16 +587,6 @@ class SequentialJailbreak(BaseMultiTurnAttack):
                     judge_res: DialogueJudge = await a_generate(
                         judge_prompt, DialogueJudge, self.simulator_model
                     )
-                    eval_flag = judge_res.harmful
-
-                # Stop when harmful response is generated
-                if eval_flag:
-                    update_pbar(progress, task_id, advance_to_end=True)
-                    return turns
-
-                if eval_percentage and eval_percentage >= 80:
-                    update_pbar(progress, task_id, advance_to_end=True)
-                    return turns
 
                 # Escalate: Improve the base attack for next iteration (gradually introduce more specificity)
                 judge_feedback = f"Harmful: {judge_res.harmful}"
@@ -628,9 +618,12 @@ class SequentialJailbreak(BaseMultiTurnAttack):
                 previous_template = rewritten_attack
                 previous_assistant_response = assistant_response.content
 
-                update_pbar(progress, task_id)
-
-        return turns
+        return mark_stop(
+            turns,
+            stop_reason,
+            detail=stop_detail,
+            turns_spent=(len(turns) - 2) // 2,
+        )
 
     def progress(
         self,

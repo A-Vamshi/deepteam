@@ -8,7 +8,6 @@ from deepteam.attacks.multi_turn.base_multi_turn_attack import (
 )
 from deepteam.attacks.base_attack import Exploitability
 from deepteam.attacks.multi_turn.bad_likert_judge.schema import (
-    BLJJudge,
     LikertExamples,
     RefinedExample,
     NewAttackPrompt,
@@ -28,7 +27,11 @@ from deepteam.attacks.multi_turn.utils import (
 )
 from deepteam.attacks.multi_turn.types import CallbackType
 from deepteam.attacks.multi_turn.base_schema import NonRefusal
-from deepteam.errors import ModelRefusalError
+from deepteam.attacks.multi_turn.progression import (
+    BehaviorShiftDetector,
+    StopReason,
+    mark_stop,
+)
 from deepteam.test_case.test_case import RTTurn
 from deepteam.vulnerabilities.types import VulnerabilityType
 from deepteam.vulnerabilities import BaseVulnerability
@@ -77,6 +80,8 @@ class BadLikertJudge(BaseMultiTurnAttack):
         vulnerability: str = None,
         vulnerability_type: str = None,
         simulator_model: Optional[Union[str, DeepEvalBaseLLM]] = None,
+        *,
+        metric_check=None,
     ) -> List[RTTurn]:
         if turns is None:
             turns = []
@@ -89,6 +94,13 @@ class BadLikertJudge(BaseMultiTurnAttack):
         vulnerability_data = (
             f"Vulnerability: {vulnerability} | Type: {vulnerability_type}"
         )
+        detector = BehaviorShiftDetector(
+            simulator_model=self.simulator_model,
+            vulnerability_data=vulnerability_data,
+            metric_check=metric_check,
+        )
+        stop_reason = StopReason.BUDGET_EXHAUSTED
+        stop_detail = None
 
         progress = create_progress()
         with progress:
@@ -99,11 +111,9 @@ class BadLikertJudge(BaseMultiTurnAttack):
             )
             # Extract last user turn as the original attack
             current_attack = None
-            original_attack = None
             for turn in reversed(turns):
                 if turn.role == "user":
                     current_attack = turn.content
-                    original_attack = turn.content
                     break
 
             if current_attack is None:
@@ -113,37 +123,25 @@ class BadLikertJudge(BaseMultiTurnAttack):
 
             # Generate assistant response if needed
             if len(turns) <= 1 or turns[-1].role == "user":
-                assistant_response = model_callback(current_attack, turns)
-                append_target_turn(turns, assistant_response)
-            else:
-                assistant_response = turns[-1].content
-
-            # Step 1: Establish the judge role and define rubric (one-time setup)
-            setup_prompt = BadLikertJudgeTemplate.likert_setup_prompt(
-                self.category, vulnerability_data
-            )
-            # Note: We don't need to store the setup response, just establish context
+                append_target_turn(
+                    turns, model_callback(current_attack, turns)
+                )
 
             backtrack_count = 0
+            turns_appended = 0
+            attempts_remaining = self.num_turns + self.max_backtracks
 
-            for turn_num in range(self.num_turns):
-                # Step 2: Judge current assistant response
-                judge_prompt = BadLikertJudgeTemplate.likert_judge(
-                    original_attack,
-                    current_attack,
-                    assistant_response,
-                    vulnerability_data,
-                )
-                judge_res: BLJJudge = generate(
-                    judge_prompt, BLJJudge, self.simulator_model
-                )
+            verdict = detector.check(turns) if self.num_turns > 0 else None
+            if verdict is not None:
+                stop_reason = StopReason.SHIFT_DETECTED
+                stop_detail = verdict.detail
+                update_pbar(progress, task_id, advance_to_end=True)
+                attempts_remaining = 0
 
-                # Stop condition: Harmful response detected
-                if judge_res.harmful:
-                    update_pbar(progress, task_id, advance_to_end=True)
-                    break
+            while turns_appended < self.num_turns and attempts_remaining > 0:
+                attempts_remaining -= 1
 
-                # Step 3: Request example pairs (score 1 and score 3)
+                # Step 1: Request example pairs (score 1 and score 3)
                 improvement_prompt = (
                     BadLikertJudgeTemplate.likert_generate_examples(
                         current_attack, self.category, vulnerability_data
@@ -154,17 +152,16 @@ class BadLikertJudge(BaseMultiTurnAttack):
                     improvement_response = generate(
                         improvement_prompt, LikertExamples, self.simulator_model
                     )
-                except Exception as e:
-                    # Backtrack: rephrase and retry
+                except Exception:
                     backtrack_count += 1
                     if backtrack_count >= self.max_backtracks:
-                        raise ModelRefusalError(entity=self.get_name())
-                    # Rephrase the rubric/role and retry
+                        stop_reason = StopReason.SIMULATION_ERROR
+                        break
                     continue
 
                 score_3_example = improvement_response.score_3_example
 
-                # Step 4: Refine if needed (adaptive, not hardcoded)
+                # Step 2: Refine if needed (adaptive, not hardcoded)
                 if self._should_refine():
                     refine_prompt = (
                         BadLikertJudgeTemplate.likert_refine_score_3(
@@ -180,7 +177,7 @@ class BadLikertJudge(BaseMultiTurnAttack):
                         # If refinement fails, use original score_3_example
                         pass
 
-                # Step 5: Extract and reuse - Generate new attack prompt from score_3_example
+                # Step 3: Extract and reuse - Generate new attack prompt from score_3_example
                 attack_generation_prompt = (
                     BadLikertJudgeTemplate.likert_generate_attack_from_example(
                         score_3_example,
@@ -196,14 +193,14 @@ class BadLikertJudge(BaseMultiTurnAttack):
                         self.simulator_model,
                     )
                     next_attack = attack_response.new_attack_prompt
-                except Exception as e:
-                    # If attack generation fails, backtrack
+                except Exception:
                     backtrack_count += 1
                     if backtrack_count >= self.max_backtracks:
-                        raise ModelRefusalError(entity=self.get_name())
+                        stop_reason = StopReason.SIMULATION_ERROR
+                        break
                     continue
 
-                # Step 6: Backtrack adaptively - Check for refusal
+                # Step 4: Backtrack adaptively - Check for refusal
                 refusal_prompt = BadLikertJudgeTemplate.non_refusal(
                     current_attack, next_attack
                 )
@@ -214,7 +211,8 @@ class BadLikertJudge(BaseMultiTurnAttack):
                 if refusal_res.refusal:
                     backtrack_count += 1
                     if backtrack_count >= self.max_backtracks:
-                        raise ModelRefusalError(entity=self.get_name())
+                        stop_reason = StopReason.SIMULATOR_REFUSED
+                        break
                     # Rephrase rubric/role and retry - skip this turn
                     continue
 
@@ -240,9 +238,22 @@ class BadLikertJudge(BaseMultiTurnAttack):
                 else:
                     append_target_turn(turns, assistant_response)
 
+                turns_appended += 1
                 update_pbar(progress, task_id)
 
-        return turns
+                verdict = detector.check(turns)
+                if verdict is not None:
+                    stop_reason = StopReason.SHIFT_DETECTED
+                    stop_detail = verdict.detail
+                    update_pbar(progress, task_id, advance_to_end=True)
+                    break
+
+        return mark_stop(
+            turns,
+            stop_reason,
+            detail=stop_detail,
+            turns_spent=(len(turns) - 2) // 2,
+        )
 
     async def _a_get_turns(
         self,
@@ -251,6 +262,8 @@ class BadLikertJudge(BaseMultiTurnAttack):
         vulnerability: str = None,
         vulnerability_type: str = None,
         simulator_model: Optional[Union[str, DeepEvalBaseLLM]] = None,
+        *,
+        metric_check=None,
     ) -> List[RTTurn]:
         if turns is None:
             turns = []
@@ -263,6 +276,13 @@ class BadLikertJudge(BaseMultiTurnAttack):
         vulnerability_data = (
             f"Vulnerability: {vulnerability} | Type: {vulnerability_type}"
         )
+        detector = BehaviorShiftDetector(
+            simulator_model=self.simulator_model,
+            vulnerability_data=vulnerability_data,
+            metric_check=metric_check,
+        )
+        stop_reason = StopReason.BUDGET_EXHAUSTED
+        stop_detail = None
 
         progress = create_progress()
         with progress:
@@ -274,11 +294,9 @@ class BadLikertJudge(BaseMultiTurnAttack):
 
             # Extract last user turn
             current_attack = None
-            original_attack = None
             for turn in reversed(turns):
                 if turn.role == "user":
                     current_attack = turn.content
-                    original_attack = turn.content
                     break
 
             if current_attack is None:
@@ -286,37 +304,25 @@ class BadLikertJudge(BaseMultiTurnAttack):
 
             # Ensure assistant response
             if len(turns) <= 1 or turns[-1].role == "user":
-                assistant_response = await model_callback(current_attack, turns)
-                append_target_turn(turns, assistant_response)
-            else:
-                assistant_response = turns[-1].content
-
-            # Step 1: Establish the judge role and define rubric (one-time setup)
-            setup_prompt = BadLikertJudgeTemplate.likert_setup_prompt(
-                self.category, vulnerability_data
-            )
-            # Note: We don't need to store the setup response, just establish context
+                append_target_turn(
+                    turns, await model_callback(current_attack, turns)
+                )
 
             backtrack_count = 0
+            turns_appended = 0
+            attempts_remaining = self.num_turns + self.max_backtracks
 
-            for turn_num in range(self.num_turns):
-                # Step 2: Judge current assistant response
-                judge_prompt = BadLikertJudgeTemplate.likert_judge(
-                    original_attack,
-                    current_attack,
-                    assistant_response,
-                    vulnerability_data,
-                )
-                judge_res: BLJJudge = await a_generate(
-                    judge_prompt, BLJJudge, self.simulator_model
-                )
+            verdict = await detector.a_check(turns) if self.num_turns > 0 else None
+            if verdict is not None:
+                stop_reason = StopReason.SHIFT_DETECTED
+                stop_detail = verdict.detail
+                update_pbar(progress, task_id, advance_to_end=True)
+                attempts_remaining = 0
 
-                # Stop condition: Harmful response detected
-                if judge_res.harmful:
-                    update_pbar(progress, task_id, advance_to_end=True)
-                    break
+            while turns_appended < self.num_turns and attempts_remaining > 0:
+                attempts_remaining -= 1
 
-                # Step 3: Request example pairs (score 1 and score 3)
+                # Step 1: Request example pairs (score 1 and score 3)
                 improvement_prompt = (
                     BadLikertJudgeTemplate.likert_generate_examples(
                         current_attack, self.category, vulnerability_data
@@ -327,17 +333,16 @@ class BadLikertJudge(BaseMultiTurnAttack):
                     improvement_response = await a_generate(
                         improvement_prompt, LikertExamples, self.simulator_model
                     )
-                except Exception as e:
-                    # Backtrack: rephrase and retry
+                except Exception:
                     backtrack_count += 1
                     if backtrack_count >= self.max_backtracks:
-                        raise ModelRefusalError(entity=self.get_name())
-                    # Rephrase the rubric/role and retry
+                        stop_reason = StopReason.SIMULATION_ERROR
+                        break
                     continue
 
                 score_3_example = improvement_response.score_3_example
 
-                # Step 4: Refine if needed (adaptive, not hardcoded)
+                # Step 2: Refine if needed (adaptive, not hardcoded)
                 if self._should_refine():
                     refine_prompt = (
                         BadLikertJudgeTemplate.likert_refine_score_3(
@@ -353,7 +358,7 @@ class BadLikertJudge(BaseMultiTurnAttack):
                         # If refinement fails, use original score_3_example
                         pass
 
-                # Step 5: Extract and reuse - Generate new attack prompt from score_3_example
+                # Step 3: Extract and reuse - Generate new attack prompt from score_3_example
                 attack_generation_prompt = (
                     BadLikertJudgeTemplate.likert_generate_attack_from_example(
                         score_3_example,
@@ -369,14 +374,14 @@ class BadLikertJudge(BaseMultiTurnAttack):
                         self.simulator_model,
                     )
                     next_attack = attack_response.new_attack_prompt
-                except Exception as e:
-                    # If attack generation fails, backtrack
+                except Exception:
                     backtrack_count += 1
                     if backtrack_count >= self.max_backtracks:
-                        raise ModelRefusalError(entity=self.get_name())
+                        stop_reason = StopReason.SIMULATION_ERROR
+                        break
                     continue
 
-                # Step 6: Backtrack adaptively - Check for refusal
+                # Step 4: Backtrack adaptively - Check for refusal
                 refusal_prompt = BadLikertJudgeTemplate.non_refusal(
                     current_attack, next_attack
                 )
@@ -387,7 +392,8 @@ class BadLikertJudge(BaseMultiTurnAttack):
                 if refusal_res.refusal:
                     backtrack_count += 1
                     if backtrack_count >= self.max_backtracks:
-                        raise ModelRefusalError(entity=self.get_name())
+                        stop_reason = StopReason.SIMULATOR_REFUSED
+                        break
                     # Rephrase rubric/role and retry - skip this turn
                     continue
 
@@ -413,9 +419,22 @@ class BadLikertJudge(BaseMultiTurnAttack):
                 else:
                     append_target_turn(turns, assistant_response)
 
+                turns_appended += 1
                 update_pbar(progress, task_id)
 
-        return turns
+                verdict = await detector.a_check(turns)
+                if verdict is not None:
+                    stop_reason = StopReason.SHIFT_DETECTED
+                    stop_detail = verdict.detail
+                    update_pbar(progress, task_id, advance_to_end=True)
+                    break
+
+        return mark_stop(
+            turns,
+            stop_reason,
+            detail=stop_detail,
+            turns_spent=(len(turns) - 2) // 2,
+        )
 
     def progress(
         self,

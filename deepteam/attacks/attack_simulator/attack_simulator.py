@@ -1,7 +1,7 @@
 import random
 import asyncio
 from pydantic import BaseModel
-from typing import List, Optional, Union
+from typing import TYPE_CHECKING, List, Optional, Union
 import inspect
 
 from deepeval.models import DeepEvalBaseLLM
@@ -19,6 +19,9 @@ from deepteam.attacks.attack_simulator.utils import (
     cost_accumulator,
     add_cost,
 )
+
+if TYPE_CHECKING:
+    from deepteam.attacks.multi_turn.progression import MetricCheckRecord
 
 
 class BaselineAttack:
@@ -38,12 +41,14 @@ class AttackSimulator:
         max_concurrent: int,
         simulator_model: Optional[Union[str, DeepEvalBaseLLM]] = None,
         attack_engine: Optional[AttackEngine] = None,
+        evaluation_model: Optional[Union[str, DeepEvalBaseLLM]] = None,
     ):
         # Initialize models and async mode
         self.purpose = purpose
         self.simulator_model, self.using_native_model = initialize_model(
             simulator_model
         )
+        self.evaluation_model = evaluation_model
         # Define list of attacks and unaligned vulnerabilities
         self.test_cases: List[RTTestCase] = []
         self.max_concurrent = max_concurrent
@@ -109,6 +114,7 @@ class AttackSimulator:
                         attack=sampled_attack,
                         test_case=test_case,
                         ignore_errors=ignore_errors,
+                        vulnerabilities=vulnerabilities,
                     )
                     update_pbar(progress, task_id_simulation)
 
@@ -194,6 +200,7 @@ class AttackSimulator:
                             attack=attack,
                             test_case=test_case,
                             ignore_errors=ignore_errors,
+                            vulnerabilities=vulnerabilities,
                         )
                         update_pbar(progress, task_id_attack)
 
@@ -266,6 +273,137 @@ class AttackSimulator:
                 raise
 
     ##################################################
+    ### Per-turn metric checks #######################
+    ##################################################
+
+    def _resolve_metric(
+        self,
+        vulnerabilities: Optional[List[BaseVulnerability]],
+        vulnerability_type,
+    ):
+        if not vulnerabilities:
+            return None
+        for vulnerability in vulnerabilities:
+            if vulnerability_type in vulnerability.types:
+                if self.evaluation_model is not None:
+                    vulnerability.evaluation_model = self.evaluation_model
+                try:
+                    return vulnerability._get_metric(vulnerability_type)
+                except Exception:
+                    return None
+        return None
+
+    @staticmethod
+    def _copy_test_case(
+        test_case: RTTestCase, turns: List["RTTurn"]
+    ) -> RTTestCase:
+        return RTTestCase(
+            vulnerability=test_case.vulnerability,
+            vulnerability_type=test_case.vulnerability_type,
+            input=test_case.input,
+            turns=list(turns),
+            metadata=test_case.metadata,
+            risk_category=test_case.risk_category,
+        )
+
+    def _build_metric_check(
+        self,
+        test_case: RTTestCase,
+        vulnerabilities: Optional[List[BaseVulnerability]],
+    ):
+        from deepteam.attacks.multi_turn.progression import (
+            MetricCheckRecord,
+            MetricVerdict,
+        )
+
+        record = MetricCheckRecord()
+
+        def check(turns) -> Optional["MetricVerdict"]:
+            metric = self._resolve_metric(
+                vulnerabilities, test_case.vulnerability_type
+            )
+            if metric is None:
+                return None
+            try:
+                metric.measure(self._copy_test_case(test_case, turns))
+            except Exception:
+                return None
+            verdict = MetricVerdict(
+                score=metric.score,
+                reason=metric.reason,
+                evaluation_cost=metric.evaluation_cost,
+            )
+            record.add(verdict)
+            return verdict
+
+        return check, record
+
+    def _a_build_metric_check(
+        self,
+        test_case: RTTestCase,
+        vulnerabilities: Optional[List[BaseVulnerability]],
+    ):
+        from deepteam.attacks.multi_turn.progression import (
+            MetricCheckRecord,
+            MetricVerdict,
+        )
+
+        record = MetricCheckRecord()
+
+        async def check(turns) -> Optional["MetricVerdict"]:
+            metric = self._resolve_metric(
+                vulnerabilities, test_case.vulnerability_type
+            )
+            if metric is None:
+                return None
+            try:
+                await metric.a_measure(
+                    self._copy_test_case(test_case, turns)
+                )
+            except Exception:
+                return None
+            verdict = MetricVerdict(
+                score=metric.score,
+                reason=metric.reason,
+                evaluation_cost=metric.evaluation_cost,
+            )
+            record.add(verdict)
+            return verdict
+
+        return check, record
+
+    @staticmethod
+    def _flag_incomplete_progression(test_case: RTTestCase):
+        from deepteam.attacks.multi_turn.progression import (
+            is_progression_completed,
+            get_stopping_reason,
+            get_stopping_category,
+        )
+
+        category = get_stopping_category(test_case.turns)
+        if (
+            category is None
+            or is_progression_completed(category)
+            or test_case.error
+        ):
+            return
+        test_case.error = (
+            get_stopping_reason(test_case.turns)
+            or f"Simulation stopped early: {category}"
+        )
+
+    @staticmethod
+    def _adopt_metric_verdict(
+        test_case: RTTestCase, record: "MetricCheckRecord"
+    ):
+        test_case.evaluation_cost = add_cost(
+            test_case.evaluation_cost, record.evaluation_cost
+        )
+        if record.verdict is not None and test_case.error is None:
+            test_case.score = record.verdict.score
+            test_case.reason = record.verdict.reason
+
+    ##################################################
     ### Enhance attacks ##############################
     ##################################################
 
@@ -274,6 +412,7 @@ class AttackSimulator:
         attack: BaseAttack,
         test_case: RTTestCase,
         ignore_errors: bool,
+        vulnerabilities: Optional[List[BaseVulnerability]] = None,
     ):
         from deepteam.test_case.test_case import RTTurn
         from deepteam.attacks.multi_turn import BaseMultiTurnAttack
@@ -287,6 +426,9 @@ class AttackSimulator:
 
             test_case.attack_method = attack.get_name()
             turns = [RTTurn(role="user", content=attack_input)]
+            metric_check, metric_holder = self._build_metric_check(
+                test_case, vulnerabilities
+            )
 
             with cost_accumulator() as acc:
                 try:
@@ -296,10 +438,12 @@ class AttackSimulator:
                         vulnerability=test_case.vulnerability,
                         vulnerability_type=test_case.vulnerability_type.value,
                         simulator_model=self.simulator_model,
+                        metric_check=metric_check,
                     )
 
                     test_case.turns = res
                     test_case.actual_output = res[-1].content
+                    self._flag_incomplete_progression(test_case)
 
                 except ModelRefusalError as e:
                     if ignore_errors:
@@ -319,6 +463,7 @@ class AttackSimulator:
                     test_case.simulation_cost = add_cost(
                         test_case.simulation_cost, acc[0]
                     )
+                    self._adopt_metric_verdict(test_case, metric_holder)
 
             return test_case
 
@@ -383,6 +528,7 @@ class AttackSimulator:
         attack: BaseAttack,
         test_case: RTTestCase,
         ignore_errors: bool,
+        vulnerabilities: Optional[List[BaseVulnerability]] = None,
     ):
         from deepteam.attacks.multi_turn import (
             BaseMultiTurnAttack,
@@ -398,6 +544,9 @@ class AttackSimulator:
             test_case.attack_method = attack.get_name()
             sig = inspect.signature(attack.a_enhance)
             turns = [RTTurn(role="user", content=attack_input)]
+            metric_check, metric_holder = self._a_build_metric_check(
+                test_case, vulnerabilities
+            )
 
             with cost_accumulator() as acc:
                 try:
@@ -407,10 +556,12 @@ class AttackSimulator:
                         vulnerability=test_case.vulnerability,
                         vulnerability_type=test_case.vulnerability_type.value,
                         simulator_model=self.simulator_model,
+                        metric_check=metric_check,
                     )
 
                     test_case.turns = res
                     test_case.actual_output = res[-1].content
+                    self._flag_incomplete_progression(test_case)
 
                 except ModelRefusalError as e:
                     if ignore_errors:
@@ -428,6 +579,7 @@ class AttackSimulator:
                     test_case.simulation_cost = add_cost(
                         test_case.simulation_cost, acc[0]
                     )
+                    self._adopt_metric_verdict(test_case, metric_holder)
 
             return test_case
 

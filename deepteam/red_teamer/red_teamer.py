@@ -36,6 +36,8 @@ from deepteam.vulnerabilities import BaseVulnerability
 from deepteam.vulnerabilities.types import VulnerabilityType
 from deepteam.attacks.attack_simulator import AttackSimulator
 from deepteam.attacks.attack_engine import AttackEngine
+from deepteam.attacks.attack_simulator.utils import add_cost
+from deepteam.attacks.multi_turn.progression import StopReason
 from deepteam.attacks.multi_turn.types import CallbackType
 from deepteam.metrics import BaseRedTeamingMetric
 from deepteam.red_teamer.risk_assessment import (
@@ -45,6 +47,14 @@ from deepteam.red_teamer.risk_assessment import (
 from deepteam.risks import getRiskCategory
 
 console = Console()
+
+
+def _has_detected_shift(test_case: RTTestCase) -> bool:
+    if test_case.score is None or not test_case.turns:
+        return False
+    return (
+        test_case.turns[-1].stopping_category == StopReason.SHIFT_DETECTED.value
+    )
 
 
 class RedTeamer:
@@ -205,6 +215,9 @@ class RedTeamer:
                         simulated_test_cases = framework.test_cases
                     else:
                         self.attack_simulator.model_callback = model_callback
+                        self.attack_simulator.evaluation_model = (
+                            self.evaluation_model
+                        )
                         if vulnerabilities:
                             self.attack_simulator.attack_engine = (
                                 self._resolve_attack_engine(attack_engine)
@@ -401,6 +414,9 @@ class RedTeamer:
                     simulated_test_cases = framework.test_cases
                 else:
                     self.attack_simulator.model_callback = model_callback
+                    self.attack_simulator.evaluation_model = (
+                        self.evaluation_model
+                    )
                     if vulnerabilities:
                         self.attack_simulator.attack_engine = (
                             self._resolve_attack_engine(attack_engine)
@@ -539,11 +555,17 @@ class RedTeamer:
             if simulated_test_case.error is not None:
                 return red_teaming_test_case
 
+            if _has_detected_shift(red_teaming_test_case):
+                return red_teaming_test_case
+
             try:
                 metric.measure(red_teaming_test_case)
                 red_teaming_test_case.score = metric.score
                 red_teaming_test_case.reason = metric.reason
-                red_teaming_test_case.evaluation_cost = metric.evaluation_cost
+                red_teaming_test_case.evaluation_cost = add_cost(
+                    red_teaming_test_case.evaluation_cost,
+                    metric.evaluation_cost,
+                )
             except:
                 if ignore_errors:
                     red_teaming_test_case.error = f"Error evaluating target LLM output for the '{vulnerability_type.value}' vulnerability type"
@@ -622,11 +644,17 @@ class RedTeamer:
             if red_teaming_test_case.error is not None:
                 return red_teaming_test_case
 
+            if _has_detected_shift(red_teaming_test_case):
+                return red_teaming_test_case
+
             try:
                 await metric.a_measure(red_teaming_test_case)
                 red_teaming_test_case.score = metric.score
                 red_teaming_test_case.reason = metric.reason
-                red_teaming_test_case.evaluation_cost = metric.evaluation_cost
+                red_teaming_test_case.evaluation_cost = add_cost(
+                    red_teaming_test_case.evaluation_cost,
+                    metric.evaluation_cost,
+                )
             except:
                 if ignore_errors:
                     red_teaming_test_case.error = f"Error evaluating target LLM output for the '{vulnerability_type.value}' vulnerability type"

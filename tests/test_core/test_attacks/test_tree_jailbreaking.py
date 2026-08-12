@@ -21,7 +21,7 @@ class TestTreeJailbreaking:
         assert attack.get_name() == "Tree Jailbreaking"
 
     def test_tree_jailbreaking_enhance_interface(self):
-        attack = TreeJailbreaking()
+        attack = TreeJailbreaking(max_depth=1, branching_factor=1)
 
         # Mock the required components
         mock_callback = MagicMock(return_value="Mock response")
@@ -66,7 +66,7 @@ class TestTreeJailbreaking:
 
     @pytest.mark.asyncio
     async def test_tree_jailbreaking_async_enhance_interface(self):
-        attack = TreeJailbreaking()
+        attack = TreeJailbreaking(max_depth=1, branching_factor=1)
 
         # Mock the required components
         mock_callback = AsyncMock(return_value="Mock response")
