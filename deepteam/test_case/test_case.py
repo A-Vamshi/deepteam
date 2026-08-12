@@ -1,4 +1,3 @@
-from nntplib import NNTPDataError
 from typing import List, Optional
 from enum import Enum
 from deepeval.test_case import LLMTestCase, Turn, ToolCall
@@ -6,11 +5,17 @@ from deepeval.test_case import LLMTestCase, Turn, ToolCall
 
 class RTTurn(Turn):
     turn_level_attack: Optional[str] = None
+    stopping_reason: Optional[str] = None
+    stopping_category: Optional[str] = None
 
     def __repr__(self):
         attrs = [f"role={self.role}", f"content={self.content}"]
         if self.turn_level_attack is not None:
             attrs.append(f"turn_level_attack={self.turn_level_attack}")
+        if self.stopping_category is not None:
+            attrs.append(f"stopping_category={self.stopping_category}")
+        if self.stopping_reason is not None:
+            attrs.append(f"stopping_reason={self.stopping_reason}")
         return f"RTTurn({', '.join(attrs)})"
 
 

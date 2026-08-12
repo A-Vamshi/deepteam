@@ -29,6 +29,8 @@ class AttackMethodResult(BaseModel):
 
 class APIRTTurn(TurnApi):
     turn_level_attack: Optional[str] = Field(None, alias="turnLevelAttack")
+    stopping_reason: Optional[str] = Field(None, alias="stoppingReason")
+    stopping_category: Optional[str] = Field(None, alias="stoppingCategory")
 
 
 class APIRTTestCase(BaseModel):
@@ -70,10 +72,12 @@ def map_turn_to_api(turn: RTTurn, order: int) -> APIRTTurn:
         role=turn.role,
         content=turn.content,
         order=order,
-        user_id=turn.user_id,
-        retrieval_context=turn.retrieval_context,
-        tools_called=turn.tools_called,
-        turn_level_attack=turn.turn_level_attack,
+        userId=turn.user_id,
+        retrievalContext=turn.retrieval_context,
+        toolsCalled=turn.tools_called,
+        turnLevelAttack=turn.turn_level_attack,
+        stoppingReason=turn.stopping_reason,
+        stoppingCategory=turn.stopping_category,
     )
 
 
