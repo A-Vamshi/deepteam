@@ -7,9 +7,9 @@ from .base_multi_turn_attack import BaseMultiTurnAttack
 from .progression import (
     BehaviorShiftDetector,
     StopReason,
-    progression_completed,
-    stop_detail_of,
-    stop_reason_of,
+    is_progression_completed,
+    get_stopping_reason,
+    get_stopping_category,
 )
 
 __all__ = [
@@ -21,7 +21,7 @@ __all__ = [
     "BaseMultiTurnAttack",
     "BehaviorShiftDetector",
     "StopReason",
-    "progression_completed",
-    "stop_detail_of",
-    "stop_reason_of",
+    "is_progression_completed",
+    "get_stopping_reason",
+    "get_stopping_category",
 ]

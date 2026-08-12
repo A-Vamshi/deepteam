@@ -11,7 +11,7 @@ from deepteam.attacks.multi_turn import (
     SequentialJailbreak,
     StopReason,
     TreeJailbreaking,
-    progression_completed,
+    is_progression_completed,
 )
 from deepteam.attacks.multi_turn.progression import (
     MetricVerdict,
@@ -193,14 +193,14 @@ class TestStopReasonPlumbing:
         )
 
     def test_only_shift_and_budget_count_as_completed(self):
-        assert progression_completed(StopReason.SHIFT_DETECTED)
-        assert progression_completed(StopReason.BUDGET_EXHAUSTED)
-        assert not progression_completed(StopReason.SIMULATOR_REFUSED)
-        assert not progression_completed(StopReason.SIMULATION_ERROR)
-        assert not progression_completed(StopReason.RUNTIME_EXCEEDED)
+        assert is_progression_completed(StopReason.SHIFT_DETECTED)
+        assert is_progression_completed(StopReason.BUDGET_EXHAUSTED)
+        assert not is_progression_completed(StopReason.SIMULATOR_REFUSED)
+        assert not is_progression_completed(StopReason.SIMULATION_ERROR)
+        assert not is_progression_completed(StopReason.RUNTIME_EXCEEDED)
 
     def test_unmarked_conversations_count_as_completed(self):
-        assert progression_completed(None)
+        assert is_progression_completed(None)
 
     def test_metric_verdict_reads_score_as_pass_fail(self):
         assert MetricVerdict(score=0.0).failed
@@ -369,7 +369,7 @@ class TestBadLikertJudgeBudget:
         assert (
             turns[-1].stopping_category == StopReason.SIMULATOR_REFUSED.value
         )
-        assert not progression_completed(turns[-1].stopping_category)
+        assert not is_progression_completed(turns[-1].stopping_category)
 
 
 @pytest.mark.usefixtures("stub_models")
@@ -438,7 +438,7 @@ class TestTreeSearch:
         assert (
             turns[-1].stopping_category == StopReason.RUNTIME_EXCEEDED.value
         )
-        assert not progression_completed(turns[-1].stopping_category)
+        assert not is_progression_completed(turns[-1].stopping_category)
 
     def test_off_topic_pruning_is_applied(self, monkeypatch):
         import deepteam.attacks.multi_turn.tree_jailbreaking.tree_jailbreaking as tree

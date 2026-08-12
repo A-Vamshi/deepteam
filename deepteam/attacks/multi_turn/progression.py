@@ -31,7 +31,7 @@ _INCOMPLETE_STOP_REASONS = frozenset(
 )
 
 
-def progression_completed(reason: Optional[Union[StopReason, str]]) -> bool:
+def is_progression_completed(reason: Optional[Union[StopReason, str]]) -> bool:
     if reason is None:
         return True
     value = reason.value if isinstance(reason, StopReason) else reason
@@ -113,13 +113,13 @@ def mark_stop(
     return turns
 
 
-def stop_reason_of(turns: Optional[List[RTTurn]]) -> Optional[str]:
+def get_stopping_category(turns: Optional[List[RTTurn]]) -> Optional[str]:
     if not turns:
         return None
     return turns[-1].stopping_category
 
 
-def stop_detail_of(turns: Optional[List[RTTurn]]) -> Optional[str]:
+def get_stopping_reason(turns: Optional[List[RTTurn]]) -> Optional[str]:
     if not turns:
         return None
     return turns[-1].stopping_reason

@@ -375,20 +375,20 @@ class AttackSimulator:
     @staticmethod
     def _flag_incomplete_progression(test_case: RTTestCase):
         from deepteam.attacks.multi_turn.progression import (
-            progression_completed,
-            stop_detail_of,
-            stop_reason_of,
+            is_progression_completed,
+            get_stopping_reason,
+            get_stopping_category,
         )
 
-        category = stop_reason_of(test_case.turns)
+        category = get_stopping_category(test_case.turns)
         if (
             category is None
-            or progression_completed(category)
+            or is_progression_completed(category)
             or test_case.error
         ):
             return
         test_case.error = (
-            stop_detail_of(test_case.turns)
+            get_stopping_reason(test_case.turns)
             or f"Simulation stopped early: {category}"
         )
 
