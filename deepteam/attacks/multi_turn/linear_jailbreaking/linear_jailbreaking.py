@@ -30,7 +30,11 @@ from deepteam.attacks.multi_turn.utils import (
 )
 from deepteam.attacks.multi_turn.base_schema import NonRefusal
 from deepteam.attacks.multi_turn.base_template import BaseMultiTurnTemplate
-from deepteam.errors import ModelRefusalError
+from deepteam.attacks.multi_turn.progression import (
+    BehaviorShiftDetector,
+    StopReason,
+    mark_stop,
+)
 from deepteam.test_case.test_case import RTTurn
 from deepteam.vulnerabilities.types import VulnerabilityType
 from deepteam.vulnerabilities import BaseVulnerability
@@ -69,6 +73,8 @@ class LinearJailbreaking(BaseMultiTurnAttack):
         vulnerability: str = None,
         vulnerability_type: str = None,
         simulator_model: Optional[Union[str, DeepEvalBaseLLM]] = None,
+        *,
+        metric_check=None,
     ) -> List[RTTurn]:
         if turns is None:
             turns = []
@@ -81,6 +87,13 @@ class LinearJailbreaking(BaseMultiTurnAttack):
         vulnerability_data = (
             f"Vulnerability: {vulnerability} | Type: {vulnerability_type}"
         )
+        detector = BehaviorShiftDetector(
+            simulator_model=self.simulator_model,
+            vulnerability_data=vulnerability_data,
+            metric_check=metric_check,
+        )
+        stop_reason = StopReason.BUDGET_EXHAUSTED
+        stop_detail = None
 
         progress = create_progress()
         with progress:
@@ -106,24 +119,28 @@ class LinearJailbreaking(BaseMultiTurnAttack):
             if len(turns) <= 1 or turns[-1].role == "user":
                 target_response = model_callback(current_attack, turns)
                 append_target_turn(turns, target_response)
+                last_response = target_response.content
             else:
-                target_response = turns[-1].content
+                last_response = turns[-1].content
 
             # Main simulation loop
             for _ in range(self.num_turns):
+                verdict = detector.check(turns)
+                if verdict is not None:
+                    stop_reason = StopReason.SHIFT_DETECTED
+                    stop_detail = verdict.detail
+                    update_pbar(progress, task_id, advance_to_end=True)
+                    break
+
                 judge_prompt = JailBreakingTemplate.linear_judge(
                     original_attack,
                     current_attack,
-                    target_response,
+                    last_response,
                     vulnerability_data,
                 )
                 feedback: Feedback = generate(
                     judge_prompt, Feedback, self.simulator_model
                 )
-
-                if feedback.jailbroken:
-                    update_pbar(progress, task_id, advance_to_end=True)
-                    break
 
                 improvement_prompt = JailBreakingTemplate.improvement_prompt(
                     turns, feedback.suggestion, vulnerability_data
@@ -141,8 +158,9 @@ class LinearJailbreaking(BaseMultiTurnAttack):
                 )
 
                 if non_refusal_res.refusal:
+                    stop_reason = StopReason.SIMULATOR_REFUSED
                     update_pbar(progress, task_id, advance_to_end=True)
-                    raise ModelRefusalError(entity=self.get_name())
+                    break
 
                 current_attack = next_attack
 
@@ -163,10 +181,23 @@ class LinearJailbreaking(BaseMultiTurnAttack):
                     )
                 else:
                     append_target_turn(turns, target_response)
+                last_response = target_response.content
 
                 update_pbar(progress, task_id)
+            else:
+                verdict = (
+                    detector.check(turns) if self.num_turns > 0 else None
+                )
+                if verdict is not None:
+                    stop_reason = StopReason.SHIFT_DETECTED
+                    stop_detail = verdict.detail
 
-        return turns
+        return mark_stop(
+            turns,
+            stop_reason,
+            detail=stop_detail,
+            turns_spent=(len(turns) - 2) // 2,
+        )
 
     async def _a_get_turns(
         self,
@@ -175,6 +206,8 @@ class LinearJailbreaking(BaseMultiTurnAttack):
         vulnerability: str = None,
         vulnerability_type: str = None,
         simulator_model: Optional[Union[str, DeepEvalBaseLLM]] = None,
+        *,
+        metric_check=None,
     ) -> List[RTTurn]:
         if turns is None:
             turns = []
@@ -187,6 +220,13 @@ class LinearJailbreaking(BaseMultiTurnAttack):
         vulnerability_data = (
             f"Vulnerability: {vulnerability} | Type: {vulnerability_type}"
         )
+        detector = BehaviorShiftDetector(
+            simulator_model=self.simulator_model,
+            vulnerability_data=vulnerability_data,
+            metric_check=metric_check,
+        )
+        stop_reason = StopReason.BUDGET_EXHAUSTED
+        stop_detail = None
 
         progress = create_progress()
         with progress:
@@ -212,24 +252,28 @@ class LinearJailbreaking(BaseMultiTurnAttack):
             if len(turns) <= 1 or turns[-1].role == "user":
                 target_response = await model_callback(current_attack, turns)
                 append_target_turn(turns, target_response)
+                last_response = target_response.content
             else:
-                target_response = turns[-1].content
+                last_response = turns[-1].content
 
             # Main simulation loop
             for _ in range(self.num_turns):
+                verdict = await detector.a_check(turns)
+                if verdict is not None:
+                    stop_reason = StopReason.SHIFT_DETECTED
+                    stop_detail = verdict.detail
+                    update_pbar(progress, task_id, advance_to_end=True)
+                    break
+
                 judge_prompt = JailBreakingTemplate.linear_judge(
                     original_attack,
                     current_attack,
-                    target_response,
+                    last_response,
                     vulnerability_data,
                 )
                 feedback: Feedback = await a_generate(
                     judge_prompt, Feedback, self.simulator_model
                 )
-
-                if feedback.jailbroken:
-                    update_pbar(progress, task_id, advance_to_end=True)
-                    break
 
                 improvement_prompt = JailBreakingTemplate.improvement_prompt(
                     turns, feedback.suggestion, vulnerability_data
@@ -247,8 +291,9 @@ class LinearJailbreaking(BaseMultiTurnAttack):
                 )
 
                 if non_refusal_res.refusal:
+                    stop_reason = StopReason.SIMULATOR_REFUSED
                     update_pbar(progress, task_id, advance_to_end=True)
-                    raise ModelRefusalError(entity=self.get_name())
+                    break
 
                 current_attack = next_attack
 
@@ -269,10 +314,23 @@ class LinearJailbreaking(BaseMultiTurnAttack):
                     )
                 else:
                     append_target_turn(turns, target_response)
+                last_response = target_response.content
 
                 update_pbar(progress, task_id)
+            else:
+                verdict = (
+                    await detector.a_check(turns) if self.num_turns > 0 else None
+                )
+                if verdict is not None:
+                    stop_reason = StopReason.SHIFT_DETECTED
+                    stop_detail = verdict.detail
 
-        return turns
+        return mark_stop(
+            turns,
+            stop_reason,
+            detail=stop_detail,
+            turns_spent=(len(turns) - 2) // 2,
+        )
 
     def progress(
         self,
