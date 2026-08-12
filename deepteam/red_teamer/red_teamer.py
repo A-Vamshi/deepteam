@@ -44,6 +44,10 @@ from deepteam.red_teamer.risk_assessment import (
     construct_risk_assessment_overview,
     RiskAssessment,
 )
+from deepteam.red_teamer.cvss import (
+    Level,
+    get_severity_from_cvss_score,
+)
 from deepteam.risks import getRiskCategory
 
 console = Console()
@@ -71,7 +75,9 @@ class RedTeamer:
         async_mode: bool = True,
         max_concurrent: int = 10,
         attack_engine: Optional[AttackEngine] = None,
+        exposure: Level = Level.MEDIUM,
     ):
+        self.exposure = exposure
         self.target_purpose = target_purpose
         self.simulator_model, _ = initialize_model(simulator_model)
         self.evaluation_model, _ = initialize_model(evaluation_model)
@@ -316,6 +322,7 @@ class RedTeamer:
                     overview=construct_risk_assessment_overview(
                         red_teaming_test_cases=red_teaming_test_cases,
                         run_duration=time.time() - start_time,
+                        exposure=self.exposure,
                     ),
                     test_cases=red_teaming_test_cases,
                 )
@@ -533,6 +540,7 @@ class RedTeamer:
                 overview=construct_risk_assessment_overview(
                     red_teaming_test_cases=red_teaming_test_cases,
                     run_duration=time.time() - start_time,
+                    exposure=self.exposure,
                 ),
                 test_cases=red_teaming_test_cases,
             )
@@ -773,6 +781,19 @@ class RedTeamer:
         )
         return red_teaming_test_cases
 
+    @staticmethod
+    def _format_cvss(score: Optional[float]) -> str:
+        if score is None:
+            return "N/A"
+        severity = get_severity_from_cvss_score(score)
+        color = {
+            "Critical": "rgb(255,85,85)",
+            "High": "rgb(255,138,76)",
+            "Medium": "rgb(255,171,0)",
+            "Low": "rgb(5,245,141)",
+        }[severity.value]
+        return f"[{color}]{score:.1f}[/{color}]"
+
     def _print_risk_assessment(self, risk_assessment=None):
         if risk_assessment is None:
             return
@@ -805,6 +826,7 @@ class RedTeamer:
         table.add_column("Output", style="white", width=30, no_wrap=False)
         table.add_column("Turns", style="white", width=30, no_wrap=False)
         table.add_column("Reason", style="dim", width=30, no_wrap=False)
+        table.add_column("CVSS", justify="center", width=8)
         table.add_column("Status", justify="center", width=10)
 
         # Add rows
@@ -841,6 +863,7 @@ class RedTeamer:
                 getattr(case, "actual_output", "N/A"),
                 turns or "N/A",
                 case.reason or "N/A",
+                self._format_cvss(case.cvss_score),
                 status_style,
             )
 
@@ -854,6 +877,14 @@ class RedTeamer:
             f"[bold magenta]🔍 DeepTeam Risk Assessment[/bold magenta] ({risk_assessment.overview.errored} errored)"
         )
         console.print("=" * 80)
+
+        overall_cvss = risk_assessment.overview.cvss_score
+        if overall_cvss is not None:
+            severity = get_severity_from_cvss_score(overall_cvss)
+            console.print(
+                f"\n🎯 Overall CVSS Score: {self._format_cvss(overall_cvss)}"
+                f" / 10.0  ({severity.value})"
+            )
 
         # Sort vulnerability type results by pass rate in descending order
         sorted_vulnerability_results = sorted(
@@ -983,6 +1014,7 @@ class RedTeamer:
                 overview=construct_risk_assessment_overview(
                     red_teaming_test_cases=all_test_cases,
                     run_duration=total_duration,
+                    exposure=self.exposure,
                 ),
                 test_cases=all_test_cases,
             )
@@ -1155,6 +1187,7 @@ class RedTeamer:
             overview=construct_risk_assessment_overview(
                 red_teaming_test_cases=all_test_cases,
                 run_duration=total_duration,
+                exposure=self.exposure,
             ),
             test_cases=all_test_cases,
         )
@@ -1250,6 +1283,7 @@ class RedTeamer:
             overview=construct_risk_assessment_overview(
                 red_teaming_test_cases=all_test_cases,
                 run_duration=total_duration,
+                exposure=self.exposure,
             ),
             test_cases=all_test_cases,
         )

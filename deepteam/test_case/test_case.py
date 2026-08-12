@@ -31,6 +31,7 @@ class RTTestCase(LLMTestCase):
     score: Optional[float] = None
     reason: Optional[str] = None
     error: Optional[str] = None
+    cvss_score: Optional[float] = None
     simulation_cost: Optional[float] = None
     evaluation_cost: Optional[float] = None
 
