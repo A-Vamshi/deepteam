@@ -24,6 +24,7 @@ from deepeval.confident.api import (
 
 class Endpoints(Enum):
     RISK_ASSESSMENT_ENDPOINT = "/v1/risk-assessments"
+    RT_FRAMEWORK_ENDPOINT = "/v1/risk-assessments/frameworks/:frameworkId"
 
 
 class Api:

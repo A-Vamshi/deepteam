@@ -6,14 +6,14 @@ from deepteam.attacks import BaseAttack
 from deepteam.attacks.multi_turn.types import CallbackType
 from deepteam.red_teamer import RedTeamer
 from deepteam.attacks.attack_engine import AttackEngine
-from deepteam.frameworks.frameworks import AISafetyFramework
+from deepteam.frameworks.frameworks import RedTeamingFramework
 
 
 def red_team(
     model_callback: CallbackType,
     vulnerabilities: Optional[List[BaseVulnerability]] = None,
     attacks: Optional[List[BaseAttack]] = None,
-    framework: Optional[AISafetyFramework] = None,
+    framework: Optional[RedTeamingFramework] = None,
     simulator_model: DeepEvalBaseLLM = "gpt-4o-mini",
     evaluation_model: DeepEvalBaseLLM = "gpt-4o-mini",
     attacks_per_vulnerability_type: int = 1,

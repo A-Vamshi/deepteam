@@ -440,7 +440,7 @@ There is **ONE** mandatory and **ELEVEN** optional arguments when calling the `r
 - `model_callback`: a callback of type `Callable[[str], str]` that wraps around the target LLM system you wish to red team.
 - [Optional] `vulnerabilities`: a list of type `BaseVulnerability`s that determines the weaknesses to detect for.
 - [Optional] `attacks`: a list of type `BaseAttack`s that determines the methods that will be simulated to expose the defined `vulnerabilities`.
-- [Optional] `framework`: an object of type `AISafetyFramework` that contains both `vulnerabilities` and `attacks` in it.
+- [Optional] `framework`: an object of type `RedTeamingFramework` that contains both `vulnerabilities` and `attacks` in it.
 - [Optional] `simulator_model`: a string specifying which of OpenAI's GPT models to use, **OR** [any custom LLM model](https://docs.confident-ai.com/guides/guides-using-custom-llms) of type `DeepEvalBaseLLM` for simulating attacks. Defaulted to `"gpt-3.5-turbo-0125"`.
 - [Optional] `evaluation_model`: a string specifying which of OpenAI's GPT models to use, **OR** [any custom LLM model](https://docs.confident-ai.com/guides/guides-using-custom-llms) of type `DeepEvalBaseLLM` for evaluation. Defaulted to `"gpt-4o"`.
 - [Optional] `attacks_per_vulnerability_type`: an int that determines the number of attacks to be simulated per vulnerability type. Defaulted to `1`.
@@ -593,7 +593,7 @@ As explained in the adversarial attack section, by making the PromptInjection at
 There is **ONE** mandatory and **TEN** optional arguments when calling the `red_team()` method:
 
 - `model_callback`: a callback of type `Callable[[str], str]` that wraps around the target LLM system you wish to red team.
-- [Optional] `framework`: an object of type `AISafetyFramework` that contains both `vulnerabilities` and `attacks` in it.
+- [Optional] `framework`: an object of type `RedTeamingFramework` that contains both `vulnerabilities` and `attacks` in it.
 - [Optional] `simulator_model`: a string specifying which of OpenAI's GPT models to use, **OR** [any custom LLM model](https://docs.confident-ai.com/guides/guides-using-custom-llms) of type `DeepEvalBaseLLM` for simulating attacks. Defaulted to `"gpt-3.5-turbo-0125"`.
 - [Optional] `evaluation_model`: a string specifying which of OpenAI's GPT models to use, **OR** [any custom LLM model](https://docs.confident-ai.com/guides/guides-using-custom-llms) of type `DeepEvalBaseLLM` for evaluation. Defaulted to `"gpt-4o"`.
 - [Optional] `attacks_per_vulnerability_type`: an int that determines the number of attacks to be simulated per vulnerability type. Defaulted to `1`.
