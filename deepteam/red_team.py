@@ -22,6 +22,7 @@ def red_team(
     max_concurrent: int = 10,
     target_purpose: Optional[str] = None,
     attack_engine: Optional[AttackEngine] = None,
+    identifier: Optional[str] = None,
 ):
     red_teamer = RedTeamer(
         async_mode=async_mode,
@@ -41,5 +42,6 @@ def red_team(
         attacks_per_vulnerability_type=attacks_per_vulnerability_type,
         ignore_errors=ignore_errors,
         attack_engine=attack_engine,
+        identifier=identifier,
     )
     return risk_assessment

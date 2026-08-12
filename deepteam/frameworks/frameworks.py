@@ -16,11 +16,11 @@ from deepteam.utils import add_pbar, create_progress, update_pbar
 
 @dataclass
 class RedTeamingFramework:
-    name: str
-    description: str
-    vulnerabilities: Optional[List[BaseVulnerability]]
-    attacks: Optional[List[BaseAttack]]
-    risk_categories: Optional[List[RiskCategory]]
+    name: str = ""
+    description: str = ""
+    vulnerabilities: Optional[List[BaseVulnerability]] = None
+    attacks: Optional[List[BaseAttack]] = None
+    risk_categories: Optional[List[RiskCategory]] = None
     _has_dataset: bool = False
     _id: Optional[str] = None
 
@@ -30,10 +30,7 @@ class RedTeamingFramework:
     def get_name(self) -> str:
         return self.name
 
-    @classmethod
-    def pull(
-        cls, id: str, confident_api_key: Optional[str] = None
-    ) -> "RedTeamingFramework":
+    def pull(self, id: str, confident_api_key: Optional[str] = None) -> None:
         """
         Pull a red teaming framework from Confident AI to run it locally.
         """
@@ -69,13 +66,9 @@ class RedTeamingFramework:
             vulnerabilities.extend(risk_category.vulnerabilities)
             attacks.extend(risk_category.attacks or [])
 
-        # Constructs the base class rather than `cls`: `pull` is inherited by the
-        # builtin frameworks, whose __init__ takes their own category literals.
-        return RedTeamingFramework(
-            name=response.name,
-            description=response.description or "",
-            vulnerabilities=vulnerabilities,
-            attacks=attacks,
-            risk_categories=risk_categories,
-            _id=response.id,
-        )
+        self.name = response.name
+        self.description = response.description or ""
+        self.vulnerabilities = vulnerabilities
+        self.attacks = attacks
+        self.risk_categories = risk_categories
+        self._id = response.id

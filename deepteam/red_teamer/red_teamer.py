@@ -103,6 +103,7 @@ class RedTeamer:
         reuse_simulated_test_cases: bool = False,
         metadata: Optional[dict] = None,
         attack_engine: Optional[AttackEngine] = None,
+        identifier: Optional[str] = None,
         _print_assessment: Optional[bool] = True,
         _upload_to_confident: Optional[bool] = True,
     ):
@@ -144,7 +145,9 @@ class RedTeamer:
                     reuse_simulated_test_cases=reuse_simulated_test_cases,
                     metadata=metadata,
                     attack_engine=attack_engine,
+                    identifier=identifier,
                     _print_assessment=_print_assessment,
+                    _upload_to_confident=_upload_to_confident,
                 )
             )
         else:
@@ -165,7 +168,9 @@ class RedTeamer:
                 )
                 if _upload_to_confident:
                     self.risk_assessment = risk_assessment
-                    self._post_risk_assessment(rt_framework_id=framework._id)
+                    self._post_risk_assessment(
+                        rt_framework_id=framework._id, identifier=identifier
+                    )
                 return risk_assessment
 
             if framework and framework._has_dataset:
@@ -303,7 +308,8 @@ class RedTeamer:
                     self._print_risk_assessment(self.risk_assessment)
                 if _upload_to_confident:
                     self._post_risk_assessment(
-                        rt_framework_id=framework._id if framework else None
+                        rt_framework_id=framework._id if framework else None,
+                        identifier=identifier,
                     )
 
                 return self.risk_assessment
@@ -321,6 +327,7 @@ class RedTeamer:
         reuse_simulated_test_cases: bool = False,
         metadata: Optional[dict] = None,
         attack_engine: Optional[AttackEngine] = None,
+        identifier: Optional[str] = None,
         _print_assessment: Optional[bool] = True,
         _upload_to_confident: Optional[bool] = True,
     ):
@@ -361,7 +368,9 @@ class RedTeamer:
             )
             if _upload_to_confident:
                 self.risk_assessment = risk_assessment
-                self._post_risk_assessment(rt_framework_id=framework._id)
+                self._post_risk_assessment(
+                    rt_framework_id=framework._id, identifier=identifier
+                )
             return risk_assessment
 
         if framework:
@@ -510,7 +519,8 @@ class RedTeamer:
                 self._print_risk_assessment(self.risk_assessment)
             if _upload_to_confident:
                 self._post_risk_assessment(
-                    rt_framework_id=framework._id if framework else None
+                    rt_framework_id=framework._id if framework else None,
+                    identifier=identifier,
                 )
 
             return self.risk_assessment
@@ -867,7 +877,11 @@ class RedTeamer:
         console.print("[bold magenta]LLM red teaming complete.[/bold magenta]")
         console.print("=" * 80 + "\n")
 
-    def _post_risk_assessment(self, rt_framework_id: Optional[str] = None):
+    def _post_risk_assessment(
+        self,
+        rt_framework_id: Optional[str] = None,
+        identifier: Optional[str] = None,
+    ):
         if not is_confident():
             passing = 0
             failing = 0
@@ -892,7 +906,9 @@ class RedTeamer:
 
         api = Api()
         api_risk_assessment = map_risk_assessment_to_api(
-            self.risk_assessment, rt_framework_id=rt_framework_id
+            self.risk_assessment,
+            identifier=identifier,
+            rt_framework_id=rt_framework_id,
         )
         try:
             body = api_risk_assessment.model_dump(
@@ -1043,6 +1059,12 @@ class RedTeamer:
                 "Please pass in a valid framework that does not rely on a dataset."
             )
 
+        if not framework.risk_categories:
+            raise ValueError(
+                "This framework has no risk categories to assess. Call 'pull' on it to load "
+                "one from Confident AI, or pass one of deepteam's builtin frameworks."
+            )
+
         def assess_risk_category(category: RiskCategory):
             return self.red_team(
                 model_callback=model_callback,
@@ -1114,6 +1136,12 @@ class RedTeamer:
         if not framework or framework._has_dataset:
             raise ValueError(
                 "Please pass in a valid framework that does not rely on a dataset."
+            )
+
+        if not framework.risk_categories:
+            raise ValueError(
+                "This framework has no risk categories to assess. Call 'pull' on it to load "
+                "one from Confident AI, or pass one of deepteam's builtin frameworks."
             )
 
         semaphore = asyncio.Semaphore(self.max_concurrent)
