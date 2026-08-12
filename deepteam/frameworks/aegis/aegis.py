@@ -4,7 +4,7 @@ from typing import Optional, Union
 from deepeval.models import DeepEvalBaseLLM
 from rich.progress import Progress
 
-from deepteam.frameworks import AISafetyFramework
+from deepteam.frameworks import RedTeamingFramework
 from deepteam.utils import update_pbar
 from deepteam.attacks.multi_turn.types import CallbackType
 from deepteam.frameworks.aegis.types import AegisType
@@ -51,7 +51,7 @@ Reference: https://huggingface.co/datasets/nvidia/Aegis-AI-Content-Safety-Datase
 """
 
 
-class Aegis(AISafetyFramework):
+class Aegis(RedTeamingFramework):
     _DATASET = "nvidia/Aegis-AI-Content-Safety-Dataset-1.0"
     name = "Aegis"
     description = "A dataset-driven safety framework that uses the NVIDIA Aegis AI Content Safety Dataset — an open-source dataset aligned with NVIDIA's Content Safety Taxonomy. Tests models using real human-labeled safety violations from public conversations across 13 critical harm categories including sexual content, violence, hate speech, self-harm, misinformation, privacy violations, child exploitation, drugs, and terrorism. Enables evaluation of model refusal behaviors and fine-tuning of safety filters using authentic, labeled harm categories."

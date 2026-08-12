@@ -1,5 +1,5 @@
 from typing import List, Literal
-from deepteam.frameworks import AISafetyFramework
+from deepteam.frameworks import RedTeamingFramework
 from deepteam.frameworks.mitre.risk_categories import MITRE_CATEGORIES
 
 """
@@ -34,7 +34,7 @@ Reference: https://attack.mitre.org
 """
 
 
-class MITRE(AISafetyFramework):
+class MITRE(RedTeamingFramework):
     name = "MITRE ATLAS"
     description = "A structured knowledge base of adversarial tactics, techniques, and procedures (TTPs) used against AI and ML systems. Extends MITRE ATT&CK® principles to the AI threat surface, testing across six adversarial tactics: reconnaissance (information gathering), resource development (capability building), initial access (entry point exploitation), ML attack staging (model-specific preparation), exfiltration (data/model theft), and impact (manipulation/degradation)."
     ALLOWED_TYPES = [

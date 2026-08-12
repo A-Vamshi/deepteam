@@ -1,5 +1,5 @@
 from typing import List, Literal
-from deepteam.frameworks import AISafetyFramework
+from deepteam.frameworks import RedTeamingFramework
 from deepteam.vulnerabilities import BaseVulnerability
 from deepteam.attacks import BaseAttack
 from deepteam.frameworks.nist.risk_categories import NIST_CATEGORIES
@@ -30,7 +30,7 @@ Reference: https://www.nist.gov/itl/ai-risk-management-framework
 """
 
 
-class NIST(AISafetyFramework):
+class NIST(RedTeamingFramework):
     name = "NIST AI Risk Management Framework (AI RMF)"
     description = "A structured methodology from NIST for identifying, evaluating, and mitigating risks in AI systems. Confident AI's implementation focuses on the Measure function - testing, evaluation, and assurance of AI behavior and risk controls across four measurement categories (M.1-M.4) covering risk metrics, trustworthiness evaluation, risk tracking, and impact assessment."
     ALLOWED_TYPES = ["measure_1", "measure_2", "measure_3", "measure_4"]

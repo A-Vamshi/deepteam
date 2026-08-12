@@ -5,7 +5,7 @@ from deepeval.models import DeepEvalBaseLLM
 from rich.progress import Progress
 
 from deepteam.utils import update_pbar
-from deepteam.frameworks import AISafetyFramework
+from deepteam.frameworks import RedTeamingFramework
 from deepteam.attacks.multi_turn.types import CallbackType
 from deepteam.frameworks.beavertails.types import BeaverTailsType
 from deepteam.test_case import RTTestCase
@@ -55,7 +55,7 @@ Reference: https://huggingface.co/datasets/PKU-Alignment/BeaverTails
 """
 
 
-class BeaverTails(AISafetyFramework):
+class BeaverTails(RedTeamingFramework):
     _DATASET = "PKU-Alignment/BeaverTails"
     name = "BeaverTails"
     description = "A dataset-driven safety framework that uses the BeaverTails dataset — a large, human-labeled collection of harmful and borderline prompts. Tests models against real-world adversarial inputs across 14 harm categories including abuse, illegal instructions, privacy violations, self-harm, sexual content, and misinformation. Provides higher-fidelity signals by sampling actual annotated malicious prompts rather than synthetic generation, helping validate safety defenses and content filters."

@@ -1,5 +1,5 @@
 from typing import List, Literal
-from deepteam.frameworks import AISafetyFramework
+from deepteam.frameworks import RedTeamingFramework
 from deepteam.vulnerabilities import (
     BaseVulnerability,
 )
@@ -39,7 +39,7 @@ Reference: https://genai.owasp.org/llm-top-10/
 """
 
 
-class OWASPTop10(AISafetyFramework):
+class OWASPTop10(RedTeamingFramework):
     name = "OWASP Top 10 for LLMs 2025"
     description = "A comprehensive list of the most critical security risks associated with LLM applications. The 2025 edition includes 10 critical risks covering prompt injection, sensitive information disclosure, supply chain vulnerabilities, data poisoning, output handling, excessive agency, system prompt leakage, vector/embedding weaknesses, misinformation, and unbounded consumption. Each risk is tested using realistic attack techniques and vulnerability assessments."
     ALLOWED_TYPES = [

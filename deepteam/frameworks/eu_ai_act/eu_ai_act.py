@@ -1,5 +1,5 @@
 from typing import List, Literal
-from deepteam.frameworks import AISafetyFramework
+from deepteam.frameworks import RedTeamingFramework
 from deepteam.frameworks.eu_ai_act.risk_categories import (
     EU_AI_ACT_CATEGORIES,
 )
@@ -42,7 +42,7 @@ Reference: https://artificialintelligenceact.eu/
 """
 
 
-class EUAIAct(AISafetyFramework):
+class EUAIAct(RedTeamingFramework):
     name = "EU Artificial Intelligence Act"
     description = "A risk-based AI regulation operationalised in DeepTeam across Article 5 prohibited practices (subliminal manipulation, exploitation of vulnerabilities, social scoring, biometric categorisation, real-time and post remote biometric identification) and Annex III high-risk AI systems (biometric identification, critical infrastructure, education, employment, essential services, law enforcement, migration/border control, and administration of justice and democracy)."
     ALLOWED_TYPES = [
