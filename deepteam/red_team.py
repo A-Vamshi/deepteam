@@ -23,6 +23,7 @@ def red_team(
     target_purpose: Optional[str] = None,
     attack_engine: Optional[AttackEngine] = None,
     identifier: Optional[str] = None,
+    run_all_attacks: bool = False,
 ):
     red_teamer = RedTeamer(
         async_mode=async_mode,
@@ -43,5 +44,6 @@ def red_team(
         ignore_errors=ignore_errors,
         attack_engine=attack_engine,
         identifier=identifier,
+        run_all_attacks=run_all_attacks,
     )
     return risk_assessment

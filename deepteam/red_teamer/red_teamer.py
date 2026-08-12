@@ -114,6 +114,7 @@ class RedTeamer:
         metadata: Optional[dict] = None,
         attack_engine: Optional[AttackEngine] = None,
         identifier: Optional[str] = None,
+        run_all_attacks: bool = False,
         _print_assessment: Optional[bool] = True,
         _upload_to_confident: Optional[bool] = True,
     ):
@@ -156,6 +157,7 @@ class RedTeamer:
                     metadata=metadata,
                     attack_engine=attack_engine,
                     identifier=identifier,
+                    run_all_attacks=run_all_attacks,
                     _print_assessment=_print_assessment,
                     _upload_to_confident=_upload_to_confident,
                 )
@@ -175,6 +177,7 @@ class RedTeamer:
                     ignore_errors=ignore_errors,
                     reuse_simulated_test_cases=reuse_simulated_test_cases,
                     metadata=metadata,
+                    run_all_attacks=run_all_attacks,
                 )
                 if _upload_to_confident:
                     self.risk_assessment = risk_assessment
@@ -235,6 +238,7 @@ class RedTeamer:
                                 ignore_errors=ignore_errors,
                                 simulator_model=self.simulator_model,
                                 metadata=metadata,
+                                run_all_attacks=run_all_attacks,
                             )
                         )
 
@@ -341,6 +345,7 @@ class RedTeamer:
         metadata: Optional[dict] = None,
         attack_engine: Optional[AttackEngine] = None,
         identifier: Optional[str] = None,
+        run_all_attacks: bool = False,
         _print_assessment: Optional[bool] = True,
         _upload_to_confident: Optional[bool] = True,
     ):
@@ -378,6 +383,7 @@ class RedTeamer:
                 ignore_errors=ignore_errors,
                 reuse_simulated_test_cases=reuse_simulated_test_cases,
                 metadata=metadata,
+                run_all_attacks=run_all_attacks,
             )
             if _upload_to_confident:
                 self.risk_assessment = risk_assessment
@@ -440,6 +446,7 @@ class RedTeamer:
                             simulator_model=self.simulator_model,
                             ignore_errors=ignore_errors,
                             metadata=metadata,
+                            run_all_attacks=run_all_attacks,
                         )
                     )
 
@@ -1081,6 +1088,7 @@ class RedTeamer:
         ignore_errors: bool = False,
         reuse_simulated_test_cases: bool = False,
         metadata: Optional[dict] = None,
+        run_all_attacks: bool = False,
     ) -> RiskAssessment:
         if not framework or framework._has_dataset:
             raise ValueError(
@@ -1104,6 +1112,7 @@ class RedTeamer:
                 reuse_simulated_test_cases=reuse_simulated_test_cases,
                 metadata=metadata,
                 attacks_per_vulnerability_type=attacks_per_vulnerability_type,
+                run_all_attacks=run_all_attacks,
                 _print_assessment=False,
                 _upload_to_confident=False,
             )
@@ -1160,6 +1169,7 @@ class RedTeamer:
         ignore_errors: bool = False,
         reuse_simulated_test_cases: bool = False,
         metadata: Optional[dict] = None,
+        run_all_attacks: bool = False,
     ) -> RiskAssessment:
         if not framework or framework._has_dataset:
             raise ValueError(
@@ -1193,6 +1203,7 @@ class RedTeamer:
                         reuse_simulated_test_cases=reuse_simulated_test_cases,
                         metadata=metadata,
                         attacks_per_vulnerability_type=attacks_per_vulnerability_type,
+                        run_all_attacks=run_all_attacks,
                         _print_assessment=False,
                         _upload_to_confident=False,
                     )

@@ -1,3 +1,4 @@
+import copy
 import random
 import asyncio
 from pydantic import BaseModel
@@ -66,6 +67,7 @@ class AttackSimulator:
         attacks: Optional[List[BaseAttack]] = None,
         simulator_model: DeepEvalBaseLLM = None,
         metadata: Optional[dict] = None,
+        run_all_attacks: bool = False,
     ) -> List[RTTestCase]:
         # Simulate unenhanced attacks for each vulnerability
         test_cases: List[RTTestCase] = []
@@ -95,7 +97,31 @@ class AttackSimulator:
                 )
                 update_pbar(progress, task_id)
 
-            if attacks is not None:
+            if run_all_attacks and attacks:
+                baseline_test_cases = test_cases
+                test_cases = []
+
+                task_id_simulation = add_pbar(
+                    progress,
+                    description=f"✨ Simulating {len(baseline_test_cases) * len(attacks)} attacks (using all {len(attacks)} method(s))",
+                    total=len(baseline_test_cases) * len(attacks),
+                )
+
+                for baseline_test_case in baseline_test_cases:
+                    for attack in attacks:
+                        test_case = copy.deepcopy(baseline_test_case)
+                        self.enhance_attack(
+                            attack=attack,
+                            test_case=test_case,
+                            ignore_errors=ignore_errors,
+                            vulnerabilities=vulnerabilities,
+                        )
+                        test_cases.append(test_case)
+                        update_pbar(progress, task_id_simulation)
+
+            # An empty list means there is nothing to sample from — enhancing
+            # would ask random.choices for a pick out of no candidates.
+            elif attacks:
                 # Enhance attacks by sampling from the provided distribution
                 attack_weights = [attack.weight for attack in attacks]
 
@@ -129,6 +155,7 @@ class AttackSimulator:
         metadata: Optional[dict] = None,
         simulator_model: DeepEvalBaseLLM = None,
         attacks: Optional[List[BaseAttack]] = None,
+        run_all_attacks: bool = False,
     ) -> List[RTTestCase]:
         # Create a semaphore to control the number of concurrent tasks
         semaphore = asyncio.Semaphore(self.max_concurrent)
@@ -173,7 +200,48 @@ class AttackSimulator:
             for result in attack_results:
                 test_cases.extend(result)
 
-            if attacks is not None:
+            if run_all_attacks and attacks:
+                baseline_attack_pairs = [
+                    (baseline_test_case, attack)
+                    for baseline_test_case in test_cases
+                    for attack in attacks
+                ]
+
+                task_id_attack = add_pbar(
+                    progress,
+                    description=f"✨ Simulating {len(baseline_attack_pairs)} attacks (using all {len(attacks)} method(s))",
+                    total=len(baseline_attack_pairs),
+                )
+
+                async def throttled_single_attack_method(
+                    baseline_test_case: RTTestCase,
+                    attack: BaseAttack,
+                ):
+                    test_case = copy.deepcopy(baseline_test_case)
+                    async with semaphore:  # Throttling applied here
+                        await self.a_enhance_attack(
+                            attack=attack,
+                            test_case=test_case,
+                            ignore_errors=ignore_errors,
+                            vulnerabilities=vulnerabilities,
+                        )
+                        update_pbar(progress, task_id_attack)
+                    return test_case
+
+                test_cases = list(
+                    await asyncio.gather(
+                        *[
+                            asyncio.create_task(
+                                throttled_single_attack_method(
+                                    baseline_test_case, attack
+                                )
+                            )
+                            for baseline_test_case, attack in baseline_attack_pairs
+                        ]
+                    )
+                )
+
+            elif attacks is not None:
                 # Enhance attacks by sampling from the provided distribution
                 task_id_attack = add_pbar(
                     progress,
@@ -357,9 +425,7 @@ class AttackSimulator:
             if metric is None:
                 return None
             try:
-                await metric.a_measure(
-                    self._copy_test_case(test_case, turns)
-                )
+                await metric.a_measure(self._copy_test_case(test_case, turns))
             except Exception:
                 return None
             verdict = MetricVerdict(
