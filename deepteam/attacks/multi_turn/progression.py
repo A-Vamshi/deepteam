@@ -168,7 +168,7 @@ class ShiftVerdict(BaseModel):
         if not self.reasoning:
             return None
         return _as_sentence(
-            f"Behavioral shift detected on this turn: {self.reasoning}"
+            f"Behavioral shift detected in this conversation: {self.reasoning}"
         )
 
 
