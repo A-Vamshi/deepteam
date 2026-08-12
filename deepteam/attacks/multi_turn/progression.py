@@ -75,13 +75,11 @@ def default_stop_detail(
             "so this conversation's length does not reflect the target's "
             "resistance."
         )
-    if reason is StopReason.RUNTIME_EXCEEDED:
-        return (
-            "The attack hit its runtime backstop before exhausting its turn "
-            "budget, so this conversation's length does not reflect the "
-            "target's resistance."
-        )
-    return "The progression ended."
+    return (
+        "The attack hit its runtime backstop before exhausting its turn "
+        "budget, so this conversation's length does not reflect the "
+        "target's resistance."
+    )
 
 
 def mark_stop(
