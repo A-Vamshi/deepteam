@@ -177,7 +177,7 @@ class TestStopReasonPlumbing:
             RTTurn(role="assistant", content="b"),
         ]
         mark_stop(turns, StopReason.SHIFT_DETECTED, detail="it complied")
-        assert turns[-1].stopping_category == "shift_detected"
+        assert turns[-1].stopping_category == "SHIFT_DETECTED"
         assert turns[-1].stopping_reason == "it complied"
         assert turns[0].stopping_reason is None
         assert turns[0].stopping_category is None

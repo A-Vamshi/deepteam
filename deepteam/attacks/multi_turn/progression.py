@@ -15,11 +15,11 @@ from deepteam.utils import format_turns
 
 
 class StopReason(str, Enum):
-    SHIFT_DETECTED = "shift_detected"
-    BUDGET_EXHAUSTED = "budget_exhausted"
-    SIMULATOR_REFUSED = "simulator_refused"
-    SIMULATION_ERROR = "simulation_error"
-    RUNTIME_EXCEEDED = "runtime_exceeded"
+    SHIFT_DETECTED = "SHIFT_DETECTED"
+    BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
+    SIMULATOR_REFUSED = "SIMULATOR_REFUSED"
+    SIMULATION_ERROR = "SIMULATION_ERROR"
+    RUNTIME_EXCEEDED = "RUNTIME_EXCEEDED"
 
 
 _INCOMPLETE_STOP_REASONS = frozenset(
