@@ -18,7 +18,7 @@ from deepteam.red_teamer.api import map_risk_assessment_to_api
 from deepteam.test_case import RTTestCase, RTTurn
 from deepeval.utils import get_or_create_event_loop
 
-from deepteam.frameworks.frameworks import AISafetyFramework
+from deepteam.frameworks.frameworks import RedTeamingFramework
 from deepteam.frameworks.risk_category import RiskCategory
 from deepteam.telemetry import capture_red_teamer_run
 from deepteam.attacks import BaseAttack
@@ -43,6 +43,10 @@ from deepteam.metrics import BaseRedTeamingMetric
 from deepteam.red_teamer.risk_assessment import (
     construct_risk_assessment_overview,
     RiskAssessment,
+)
+from deepteam.red_teamer.cvss import (
+    Level,
+    get_severity_from_cvss_score,
 )
 from deepteam.risks import getRiskCategory
 
@@ -71,7 +75,9 @@ class RedTeamer:
         async_mode: bool = True,
         max_concurrent: int = 10,
         attack_engine: Optional[AttackEngine] = None,
+        exposure: Level = Level.MEDIUM,
     ):
+        self.exposure = exposure
         self.target_purpose = target_purpose
         self.simulator_model, _ = initialize_model(simulator_model)
         self.evaluation_model, _ = initialize_model(evaluation_model)
@@ -107,12 +113,14 @@ class RedTeamer:
         attacks: Optional[List[BaseAttack]] = None,
         simulator_model: DeepEvalBaseLLM = None,
         evaluation_model: DeepEvalBaseLLM = None,
-        framework: Optional[AISafetyFramework] = None,
+        framework: Optional[RedTeamingFramework] = None,
         attacks_per_vulnerability_type: int = 1,
         ignore_errors: bool = True,
         reuse_simulated_test_cases: bool = False,
         metadata: Optional[dict] = None,
         attack_engine: Optional[AttackEngine] = None,
+        identifier: Optional[str] = None,
+        run_all_attacks: bool = False,
         _print_assessment: Optional[bool] = True,
         _upload_to_confident: Optional[bool] = True,
     ):
@@ -154,7 +162,10 @@ class RedTeamer:
                     reuse_simulated_test_cases=reuse_simulated_test_cases,
                     metadata=metadata,
                     attack_engine=attack_engine,
+                    identifier=identifier,
+                    run_all_attacks=run_all_attacks,
                     _print_assessment=_print_assessment,
+                    _upload_to_confident=_upload_to_confident,
                 )
             )
         else:
@@ -172,10 +183,13 @@ class RedTeamer:
                     ignore_errors=ignore_errors,
                     reuse_simulated_test_cases=reuse_simulated_test_cases,
                     metadata=metadata,
+                    run_all_attacks=run_all_attacks,
                 )
                 if _upload_to_confident:
                     self.risk_assessment = risk_assessment
-                    self._post_risk_assessment()
+                    self._post_risk_assessment(
+                        rt_framework_id=framework._id, identifier=identifier
+                    )
                 return risk_assessment
 
             if framework and framework._has_dataset:
@@ -230,6 +244,7 @@ class RedTeamer:
                                 ignore_errors=ignore_errors,
                                 simulator_model=self.simulator_model,
                                 metadata=metadata,
+                                run_all_attacks=run_all_attacks,
                             )
                         )
 
@@ -307,6 +322,7 @@ class RedTeamer:
                     overview=construct_risk_assessment_overview(
                         red_teaming_test_cases=red_teaming_test_cases,
                         run_duration=time.time() - start_time,
+                        exposure=self.exposure,
                     ),
                     test_cases=red_teaming_test_cases,
                 )
@@ -315,7 +331,10 @@ class RedTeamer:
                 if _print_assessment:
                     self._print_risk_assessment(self.risk_assessment)
                 if _upload_to_confident:
-                    self._post_risk_assessment()
+                    self._post_risk_assessment(
+                        rt_framework_id=framework._id if framework else None,
+                        identifier=identifier,
+                    )
 
                 return self.risk_assessment
 
@@ -326,12 +345,14 @@ class RedTeamer:
         attacks: Optional[List[BaseAttack]] = None,
         simulator_model: DeepEvalBaseLLM = None,
         evaluation_model: DeepEvalBaseLLM = None,
-        framework: Optional[AISafetyFramework] = None,
+        framework: Optional[RedTeamingFramework] = None,
         attacks_per_vulnerability_type: int = 1,
         ignore_errors: bool = False,
         reuse_simulated_test_cases: bool = False,
         metadata: Optional[dict] = None,
         attack_engine: Optional[AttackEngine] = None,
+        identifier: Optional[str] = None,
+        run_all_attacks: bool = False,
         _print_assessment: Optional[bool] = True,
         _upload_to_confident: Optional[bool] = True,
     ):
@@ -369,10 +390,13 @@ class RedTeamer:
                 ignore_errors=ignore_errors,
                 reuse_simulated_test_cases=reuse_simulated_test_cases,
                 metadata=metadata,
+                run_all_attacks=run_all_attacks,
             )
             if _upload_to_confident:
                 self.risk_assessment = risk_assessment
-                self._post_risk_assessment()
+                self._post_risk_assessment(
+                    rt_framework_id=framework._id, identifier=identifier
+                )
             return risk_assessment
 
         if framework:
@@ -429,6 +453,7 @@ class RedTeamer:
                             simulator_model=self.simulator_model,
                             ignore_errors=ignore_errors,
                             metadata=metadata,
+                            run_all_attacks=run_all_attacks,
                         )
                     )
 
@@ -515,6 +540,7 @@ class RedTeamer:
                 overview=construct_risk_assessment_overview(
                     red_teaming_test_cases=red_teaming_test_cases,
                     run_duration=time.time() - start_time,
+                    exposure=self.exposure,
                 ),
                 test_cases=red_teaming_test_cases,
             )
@@ -523,7 +549,10 @@ class RedTeamer:
             if _print_assessment:
                 self._print_risk_assessment(self.risk_assessment)
             if _upload_to_confident:
-                self._post_risk_assessment()
+                self._post_risk_assessment(
+                    rt_framework_id=framework._id if framework else None,
+                    identifier=identifier,
+                )
 
             return self.risk_assessment
 
@@ -752,6 +781,19 @@ class RedTeamer:
         )
         return red_teaming_test_cases
 
+    @staticmethod
+    def _format_cvss(score: Optional[float]) -> str:
+        if score is None:
+            return "N/A"
+        severity = get_severity_from_cvss_score(score)
+        color = {
+            "Critical": "rgb(255,85,85)",
+            "High": "rgb(255,138,76)",
+            "Medium": "rgb(255,171,0)",
+            "Low": "rgb(5,245,141)",
+        }[severity.value]
+        return f"[{color}]{score:.1f}[/{color}]"
+
     def _print_risk_assessment(self, risk_assessment=None):
         if risk_assessment is None:
             return
@@ -784,6 +826,7 @@ class RedTeamer:
         table.add_column("Output", style="white", width=30, no_wrap=False)
         table.add_column("Turns", style="white", width=30, no_wrap=False)
         table.add_column("Reason", style="dim", width=30, no_wrap=False)
+        table.add_column("CVSS", justify="center", width=8)
         table.add_column("Status", justify="center", width=10)
 
         # Add rows
@@ -820,6 +863,7 @@ class RedTeamer:
                 getattr(case, "actual_output", "N/A"),
                 turns or "N/A",
                 case.reason or "N/A",
+                self._format_cvss(case.cvss_score),
                 status_style,
             )
 
@@ -833,6 +877,14 @@ class RedTeamer:
             f"[bold magenta]🔍 DeepTeam Risk Assessment[/bold magenta] ({risk_assessment.overview.errored} errored)"
         )
         console.print("=" * 80)
+
+        overall_cvss = risk_assessment.overview.cvss_score
+        if overall_cvss is not None:
+            severity = get_severity_from_cvss_score(overall_cvss)
+            console.print(
+                f"\n🎯 Overall CVSS Score: {self._format_cvss(overall_cvss)}"
+                f" / 10.0  ({severity.value})"
+            )
 
         # Sort vulnerability type results by pass rate in descending order
         sorted_vulnerability_results = sorted(
@@ -891,7 +943,11 @@ class RedTeamer:
         console.print("[bold magenta]LLM red teaming complete.[/bold magenta]")
         console.print("=" * 80 + "\n")
 
-    def _post_risk_assessment(self):
+    def _post_risk_assessment(
+        self,
+        rt_framework_id: Optional[str] = None,
+        identifier: Optional[str] = None,
+    ):
         if not is_confident():
             passing = 0
             failing = 0
@@ -915,7 +971,11 @@ class RedTeamer:
             return
 
         api = Api()
-        api_risk_assessment = map_risk_assessment_to_api(self.risk_assessment)
+        api_risk_assessment = map_risk_assessment_to_api(
+            self.risk_assessment,
+            identifier=identifier,
+            rt_framework_id=rt_framework_id,
+        )
         try:
             body = api_risk_assessment.model_dump(
                 by_alias=True, exclude_none=True
@@ -954,6 +1014,7 @@ class RedTeamer:
                 overview=construct_risk_assessment_overview(
                     red_teaming_test_cases=all_test_cases,
                     run_duration=total_duration,
+                    exposure=self.exposure,
                 ),
                 test_cases=all_test_cases,
             )
@@ -1054,15 +1115,22 @@ class RedTeamer:
         model_callback: CallbackType,
         simulator_model: DeepEvalBaseLLM = None,
         evaluation_model: DeepEvalBaseLLM = None,
-        framework: Optional[AISafetyFramework] = None,
+        framework: Optional[RedTeamingFramework] = None,
         attacks_per_vulnerability_type: int = 1,
         ignore_errors: bool = False,
         reuse_simulated_test_cases: bool = False,
         metadata: Optional[dict] = None,
+        run_all_attacks: bool = False,
     ) -> RiskAssessment:
         if not framework or framework._has_dataset:
             raise ValueError(
                 "Please pass in a valid framework that does not rely on a dataset."
+            )
+
+        if not framework.risk_categories:
+            raise ValueError(
+                "This framework has no risk categories to assess. Call 'pull' on it to load "
+                "one from Confident AI, or pass one of deepteam's builtin frameworks."
             )
 
         def assess_risk_category(category: RiskCategory):
@@ -1076,6 +1144,7 @@ class RedTeamer:
                 reuse_simulated_test_cases=reuse_simulated_test_cases,
                 metadata=metadata,
                 attacks_per_vulnerability_type=attacks_per_vulnerability_type,
+                run_all_attacks=run_all_attacks,
                 _print_assessment=False,
                 _upload_to_confident=False,
             )
@@ -1097,6 +1166,10 @@ class RedTeamer:
                         total=1,
                     )
                     framework_assessment = assess_risk_category(risk_category)
+                    # The framework's own risk category is more specific than
+                    # the one `red_team` derives from each vulnerability type.
+                    for test_case in framework_assessment.test_cases:
+                        test_case.risk_category = risk_category.name
                     results[risk_category.name] = framework_assessment
                     update_pbar(progress_2, risk_task_id, advance_to_end=True)
                 update_pbar(progress, task_id)
@@ -1114,6 +1187,7 @@ class RedTeamer:
             overview=construct_risk_assessment_overview(
                 red_teaming_test_cases=all_test_cases,
                 run_duration=total_duration,
+                exposure=self.exposure,
             ),
             test_cases=all_test_cases,
         )
@@ -1123,15 +1197,22 @@ class RedTeamer:
         model_callback: CallbackType,
         simulator_model: DeepEvalBaseLLM = None,
         evaluation_model: DeepEvalBaseLLM = None,
-        framework: Optional[AISafetyFramework] = None,
+        framework: Optional[RedTeamingFramework] = None,
         attacks_per_vulnerability_type: int = 1,
         ignore_errors: bool = False,
         reuse_simulated_test_cases: bool = False,
         metadata: Optional[dict] = None,
+        run_all_attacks: bool = False,
     ) -> RiskAssessment:
         if not framework or framework._has_dataset:
             raise ValueError(
                 "Please pass in a valid framework that does not rely on a dataset."
+            )
+
+        if not framework.risk_categories:
+            raise ValueError(
+                "This framework has no risk categories to assess. Call 'pull' on it to load "
+                "one from Confident AI, or pass one of deepteam's builtin frameworks."
             )
 
         semaphore = asyncio.Semaphore(self.max_concurrent)
@@ -1155,9 +1236,14 @@ class RedTeamer:
                         reuse_simulated_test_cases=reuse_simulated_test_cases,
                         metadata=metadata,
                         attacks_per_vulnerability_type=attacks_per_vulnerability_type,
+                        run_all_attacks=run_all_attacks,
                         _print_assessment=False,
                         _upload_to_confident=False,
                     )
+                    # The framework's own risk category is more specific than
+                    # the one `a_red_team` derives from each vulnerability type.
+                    for test_case in assessment.test_cases:
+                        test_case.risk_category = category.name
                     update_pbar(progress_2, risk_task_id, advance_to_end=True)
                 return category.name, assessment
 
@@ -1197,6 +1283,7 @@ class RedTeamer:
             overview=construct_risk_assessment_overview(
                 red_teaming_test_cases=all_test_cases,
                 run_duration=total_duration,
+                exposure=self.exposure,
             ),
             test_cases=all_test_cases,
         )

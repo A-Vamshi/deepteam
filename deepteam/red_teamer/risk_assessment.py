@@ -27,6 +27,7 @@ class TestCasesList(list):
                 "Score": case.score,
                 "Reason": case.reason,
                 "Error": case.error,
+                "CVSS Score": case.cvss_score,
                 "Status": (
                     "Passed"
                     if case.score and case.score > 0
@@ -98,6 +99,7 @@ class RedTeamingOverview(BaseModel):
     attack_method_results: List[AttackMethodResult]
     errored: int
     run_duration: float
+    cvss_score: Optional[float] = None
 
     def to_df(self):
         import pandas as pd
@@ -177,8 +179,22 @@ class RiskAssessment(BaseModel):
 
 
 def construct_risk_assessment_overview(
-    red_teaming_test_cases: List[RTTestCase], run_duration: float
+    red_teaming_test_cases: List[RTTestCase],
+    run_duration: float,
+    exposure: Optional["Level"] = None,
 ) -> RedTeamingOverview:
+    from deepteam.red_teamer.cvss import (
+        DEFAULT_EXPOSURE,
+        compute_average_cvss_score,
+        compute_test_case_cvss_score,
+    )
+
+    exposure = exposure or DEFAULT_EXPOSURE
+    for test_case in red_teaming_test_cases:
+        test_case.cvss_score = compute_test_case_cvss_score(
+            test_case, exposure
+        )
+
     # Group test cases by vulnerability type
     vulnerability_type_to_cases: Dict[
         VulnerabilityType,
@@ -255,4 +271,5 @@ def construct_risk_assessment_overview(
         attack_method_results=attack_method_results,
         errored=errored,
         run_duration=run_duration,
+        cvss_score=compute_average_cvss_score(red_teaming_test_cases),
     )

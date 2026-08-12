@@ -1,7 +1,7 @@
 from typing import Dict, List, Optional
 from pydantic import BaseModel
 from .aegis.aegis import Aegis
-from .frameworks import AISafetyFramework
+from .frameworks import RedTeamingFramework
 from .beavertails.beavertails import BeaverTails
 from .owasp.owasp import OWASPTop10
 from .nist.nist import NIST
@@ -15,7 +15,7 @@ from .mitre.risk_categories import MITRE_CATEGORIES
 from .owasp_top_10_agentic.risk_categories import OWASP_ASI_CATEGORIES
 from .eu_ai_act.risk_categories import EU_AI_ACT_CATEGORIES
 
-FRAMEWORKS_MAP: Dict[str, AISafetyFramework] = {
+FRAMEWORKS_MAP: Dict[str, RedTeamingFramework] = {
     f.name: f for f in [OWASPTop10, NIST, MITRE, OWASP_ASI_2026, EUAIAct]
 }
 

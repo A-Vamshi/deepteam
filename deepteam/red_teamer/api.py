@@ -63,6 +63,7 @@ class APIRiskAssessment(BaseModel):
     run_duration: float = Field(alias="runDuration")
     identifier: Optional[str] = Field(alias="identifier")
     assessment_cost: Optional[float] = Field(alias="assessmentCost")
+    rt_framework_id: Optional[str] = Field(None, alias="rtFrameworkId")
     test_cases: List[APIRTTestCase] = Field(alias="testCases")
 
 
@@ -144,6 +145,7 @@ def map_risk_assessment_to_api(
     risk_assessment: RiskAssessment,
     assessment_cost: Optional[float] = None,
     identifier: Optional[str] = None,
+    rt_framework_id: Optional[str] = None,
 ) -> APIRiskAssessment:
     """
     Map RiskAssessment to APIRiskAssessment.
@@ -152,6 +154,8 @@ def map_risk_assessment_to_api(
         risk_assessment: The internal RiskAssessment object
         identifier: Optional[str] = None,
         assessment_cost: Optional[float] = None,
+        rt_framework_id: id of the Confident AI framework this assessment ran,
+            set only when the framework was pulled from Confident AI.
 
     Returns:
         APIRiskAssessment: The API-compatible risk assessment object
@@ -177,5 +181,6 @@ def map_risk_assessment_to_api(
         runDuration=risk_assessment.overview.run_duration,
         identifier=identifier,
         assessmentCost=assessment_cost,
+        rtFrameworkId=rt_framework_id,
         testCases=test_cases,
     )

@@ -1,5 +1,5 @@
 from typing import List, Literal
-from deepteam.frameworks import AISafetyFramework
+from deepteam.frameworks import RedTeamingFramework
 from deepteam.frameworks.owasp_top_10_agentic.risk_categories import (
     OWASP_ASI_CATEGORIES,
 )
@@ -41,7 +41,7 @@ Reference: https://genai.owasp.org/resource/owasp-top-10-for-agentic-application
 """
 
 
-class OWASP_ASI_2026(AISafetyFramework):
+class OWASP_ASI_2026(RedTeamingFramework):
     name = "OWASP Top 10 for Agentic Applications 2026"
     description = "A comprehensive list of the most critical security risks associated with agentic AI applications. The 2026 edition focuses on failures introduced by autonomy, tool usage, delegated trust, memory persistence, inter-agent communication, and emergent behavior. Each risk category is evaluated using realistic attack techniques and typed vulnerability assessments aligned with agent reasoning and behavior."
 
