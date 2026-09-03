@@ -32,12 +32,12 @@ from deepteam.trace_scanner import TraceScanner
 
 def _build_types(name: str, types: Optional[List[str]]) -> List[Enum]:
     if types:
-        members = Enum("CustomVulnerabilityType", {t.upper(): t for t in types})
+        vulnerability_types = Enum("CustomVulnerabilityType", {t.upper(): t for t in types})
     else:
-        members = Enum(
+        vulnerability_types = Enum(
             "CustomVulnerabilityType", {name.upper().replace(" ", "_"): name}
         )
-    return list(members)
+    return list(vulnerability_types)
 
 
 class CustomVulnerability(BaseVulnerability):
