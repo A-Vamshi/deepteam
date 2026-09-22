@@ -46,11 +46,6 @@ class ChainOfThoughtHijacking(BaseSingleTurnAttack):
             type="string",
             description="Optional role or context line placed before the puzzle.",
         ),
-        "max_retries": AttackParameter(
-            type="integer",
-            default=3,
-            description="Attempts to generate a puzzle that passes the benign-content check before giving up and sending the request unenhanced.",
-        ),
     }
 
     def __init__(
