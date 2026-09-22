@@ -3,6 +3,9 @@ from .linear_jailbreaking import LinearJailbreaking
 from .tree_jailbreaking import TreeJailbreaking
 from .sequential_break import SequentialJailbreak
 from .bad_likert_judge import BadLikertJudge
+from .x_teaming import XTeaming
+from .actor_attack import ActorAttack
+from .chain_of_lure import ChainOfLure
 from .base_multi_turn_attack import BaseMultiTurnAttack
 from .progression import (
     BehaviorShiftDetector,
@@ -18,6 +21,9 @@ __all__ = [
     "TreeJailbreaking",
     "SequentialJailbreak",
     "BadLikertJudge",
+    "XTeaming",
+    "ActorAttack",
+    "ChainOfLure",
     "BaseMultiTurnAttack",
     "BehaviorShiftDetector",
     "StopReason",

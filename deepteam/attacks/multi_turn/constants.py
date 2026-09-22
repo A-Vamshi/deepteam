@@ -7,6 +7,9 @@ from .linear_jailbreaking import LinearJailbreaking
 from .tree_jailbreaking import TreeJailbreaking
 from .sequential_break import SequentialJailbreak
 from .bad_likert_judge import BadLikertJudge
+from .x_teaming import XTeaming
+from .actor_attack import ActorAttack
+from .chain_of_lure import ChainOfLure
 
 MULTI_TURN_ATTACK_CLASSES_MAP: Dict[str, BaseMultiTurnAttack] = {
     v.name: v
@@ -16,6 +19,9 @@ MULTI_TURN_ATTACK_CLASSES_MAP: Dict[str, BaseMultiTurnAttack] = {
         TreeJailbreaking,
         SequentialJailbreak,
         BadLikertJudge,
+        XTeaming,
+        ActorAttack,
+        ChainOfLure,
     ]
 }
 
