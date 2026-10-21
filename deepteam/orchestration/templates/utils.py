@@ -44,7 +44,7 @@ def format_attempts(attempts: List[Dict[str, Any]]) -> str:
     return "\n\n".join(blocks)
 
 
-def format_peer_verdicts(peers: List[Dict[str, Any]]) -> str:
+def format_peer_exchanges(peers: List[Dict[str, Any]]) -> str:
     blocks = []
     for peer in peers:
         lines = [
@@ -52,10 +52,13 @@ def format_peer_verdicts(peers: List[Dict[str, Any]]) -> str:
             f"(weighted score {peer['weighted_score']:.2f})",
             f"Approach: {peer['instructions']}",
         ]
-        for i, verdict in enumerate(peer["verdicts"], 1):
-            lines.append(
-                f"  Turn {i}: {verdict['score']}/10. {verdict['reason']} "
-                f"Guidance given: {verdict['improvement_guidance'] or '(none)'}"
-            )
+        for i, turn in enumerate(peer["turns"], 1):
+            lines += [
+                f"  Turn {i}",
+                f"    Prober: {turn['prober']}",
+                f"    Target: {turn['target']}",
+                f"    Judge: {turn['score']}/10. {turn['reason']} "
+                f"Guidance given: {turn['improvement_guidance'] or '(none)'}",
+            ]
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)

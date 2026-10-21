@@ -468,16 +468,9 @@ class OrchestrationAgent:
                         "criteria": other.criteria,
                         "instructions": other.instructions,
                         "weighted_score": other.weighted_score,
-                        "verdicts": [
-                            verdict.model_dump(
-                                include={
-                                    "score",
-                                    "reason",
-                                    "improvement_guidance",
-                                }
-                            )
-                            for verdict in other.verdicts
-                        ],
+                        "turns": self._own_turns(
+                            other.progression.probes, other.verdicts
+                        ),
                     }
                     for other in others
                 ],
@@ -534,6 +527,7 @@ class OrchestrationAgent:
                 "target": probe.output.content,
                 "score": verdict.score,
                 "reason": verdict.reason,
+                "improvement_guidance": verdict.improvement_guidance,
             }
             for probe, verdict in zip(probes, verdicts)
         ]
