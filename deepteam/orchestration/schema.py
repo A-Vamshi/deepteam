@@ -1,3 +1,5 @@
+from typing import List
+
 from pydantic import BaseModel
 
 
@@ -24,6 +26,8 @@ class ScenarioRewrite(BaseModel):
 
 class EscalationGuidance(BaseModel):
     guidance: str
+    strategy_name: str
+    effectiveness: str
 
 
 class CriteriaVerdict(BaseModel):
@@ -36,3 +40,13 @@ class CriteriaVerdict(BaseModel):
     @property
     def unit_score(self) -> float:
         return max(0.0, min(1.0, (self.score - 1) / 9))
+
+
+class SequentialVerdict(BaseModel):
+    reason: str
+    scores: List[int]
+    met: List[int]
+    focus: int
+    improvement_guidance: str
+    strategy_name: str
+    effectiveness: str

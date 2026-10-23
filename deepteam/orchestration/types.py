@@ -1,15 +1,16 @@
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from deepteam.attacks.multi_turn.progression import ProgressionResult
-from deepteam.orchestration.schema import CriteriaVerdict
+from deepteam.orchestration.schema import CriteriaVerdict, SequentialVerdict
 from deepteam.test_case.test_case import RTTurn
 
 
 class Escalation(BaseModel):
     turn: int
     guidance: str
+    strategy: Optional[str] = None
 
 
 class SubAgentReport(BaseModel):
@@ -17,6 +18,7 @@ class SubAgentReport(BaseModel):
     scenario: str
     target_analysis: str
     instructions: str
+    strategy: Optional[str] = None
     progression: ProgressionResult
     verdicts: List[CriteriaVerdict] = []
     escalations: List[Escalation] = []
@@ -41,3 +43,14 @@ class OrchestrationResult(BaseModel):
     rounds: List[RoundResult] = []
     met_criteria: List[MetCriteria] = []
     conversation: List[RTTurn] = []
+
+
+class SequentialResult(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    task: str
+    scenario: str
+    turns: List[RTTurn] = []
+    verdicts: List[SequentialVerdict] = []
+    met_criteria: List[str] = []
+    error: Optional[Exception] = None

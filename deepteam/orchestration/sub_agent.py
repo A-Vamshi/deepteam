@@ -8,6 +8,7 @@ from deepteam.attacks.multi_turn.progression import (
 )
 from deepteam.orchestration.judge import CriteriaJudge
 from deepteam.orchestration.schema import CriteriaVerdict
+from deepteam.orchestration.strategy import StrategyExecutor
 from deepteam.orchestration.templates import SubAgentTemplate
 from deepteam.orchestration.types import Escalation, SubAgentReport
 from deepteam.orchestration.utils import (
@@ -43,6 +44,7 @@ class SubAgent:
         self.instructions = instructions
         self.seed_turns = list(seed_turns or [])
         self.judge = CriteriaJudge(parent.judge_model, task, scenario)
+        self.executor = StrategyExecutor(self, parent.simulator_model)
 
         self.progression: Optional[Progression] = None
         self.verdicts: List[CriteriaVerdict] = []
@@ -75,6 +77,11 @@ class SubAgent:
                 scenario=self.scenario,
                 target_analysis=self.target_analysis,
                 instructions=self.instructions,
+                strategy=(
+                    self.executor.strategy.name
+                    if self.executor.strategy
+                    else None
+                ),
                 progression=self.progression.finalize(),
                 verdicts=self.verdicts,
                 escalations=self.escalations,
@@ -92,26 +99,33 @@ class SubAgent:
                 message = await self.parent.a_next_message(
                     self._next_turn_prompt(progression)
                 )
-                probe = await progression.a_probe(message)
-                verdict = await self._a_judge(progression, probe)
-                await progression.a_commit(probe)
+                before = len(self.verdicts)
 
-                self.verdicts.append(verdict)
-                progression.score_probe(
-                    probe, verdict.unit_score, verdict.reason
+                async def deliver(text: str) -> Probe:
+                    return await self._a_deliver(progression, text)
+
+                await self.executor.a_send(message, deliver)
+                new_verdicts = self.verdicts[before:]
+
+                won = next(
+                    (v for v in new_verdicts if v.criteria_met), None
                 )
-
-                if verdict.criteria_met:
+                if won is not None:
                     return progression.stop(
-                        StopReason.SHIFT_DETECTED, verdict.reason
+                        StopReason.SHIFT_DETECTED, won.reason
                     )
-                elif verdict.escalate_to_parent and self._may_escalate(turn):
+
+                verdict = self.verdicts[-1]
+                if verdict.escalate_to_parent and self._may_escalate(turn):
+                    escalation = await self.parent.a_handle_escalation(self)
+                    strategy = self.executor.adopt_by_name(
+                        escalation.strategy_name, escalation.effectiveness
+                    )
                     self.escalations.append(
                         Escalation(
                             turn=turn,
-                            guidance=await self.parent.a_handle_escalation(
-                                self
-                            ),
+                            guidance=escalation.guidance,
+                            strategy=strategy.name if strategy else None,
                         )
                     )
         except Exception as exc:
@@ -122,13 +136,21 @@ class SubAgent:
         if self.stopped:
             progression.stop(StopReason.STOPPED_BY_PARENT)
 
+    async def _a_deliver(self, progression: Progression, text: str) -> Probe:
+        probe = await progression.a_probe(text)
+        verdict = await self._a_judge(progression, probe)
+        await progression.a_commit(probe)
+        self.verdicts.append(verdict)
+        progression.score_probe(probe, verdict.unit_score, verdict.reason)
+        return probe
+
     def _may_escalate(self, turn: int) -> bool:
         # Escalate only with a turn left to use the guidance, and give each
         # piece of guidance a few turns to work before asking again.
         if self.stopped or turn >= self.parent.max_turns:
             return False
         if not self.escalations:
-            return True
+            return turn > self.parent.escalation_cooldown
         return (
             turn - self.escalations[-1].turn
             >= self.parent.escalation_cooldown
@@ -166,10 +188,19 @@ class SubAgent:
         # exactly the history before this exchange.
         return await self.judge.a_judge(
             self.criteria,
-            current_turn=as_current_turn(probe),
+            current_turn=self._current_turn(probe),
             chat_history=as_chat_history(progression.turns),
             previous_scores=[
                 verdict.model_dump(include={"score", "reason"})
                 for verdict in self.verdicts
             ],
         )
+
+    def _current_turn(self, probe: Probe) -> dict:
+        current = as_current_turn(probe)
+        strategy = self.executor.strategy
+        if strategy is not None:
+            decoded = strategy.decode(probe.output.content)
+            if decoded is not None:
+                current["assistant"] = decoded
+        return current

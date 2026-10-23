@@ -26,6 +26,7 @@ from deepteam.orchestration.schema import (
     ScenarioRewrite,
     SubAgentInstructions,
 )
+from deepteam.orchestration.strategy import strategy_catalog
 from deepteam.orchestration.sub_agent import SubAgent
 from deepteam.orchestration.templates import AgentTemplate
 from deepteam.orchestration.types import (
@@ -205,15 +206,34 @@ class OrchestrationAgent:
         return [sub_agent for group in groups for sub_agent in group]
 
     def create_sub_agent(
-        self, task: str, criteria: str, scenario: str, target_analysis: str
+        self,
+        task: str,
+        criteria: str,
+        scenario: str,
+        target_analysis: str,
+        strategy_name: Optional[str] = None,
+        effectiveness: Optional[str] = None,
     ) -> SubAgent:
         loop = get_or_create_event_loop()
         return loop.run_until_complete(
-            self.a_create_sub_agent(task, criteria, scenario, target_analysis)
+            self.a_create_sub_agent(
+                task,
+                criteria,
+                scenario,
+                target_analysis,
+                strategy_name,
+                effectiveness,
+            )
         )
 
     async def a_create_sub_agent(
-        self, task: str, criteria: str, scenario: str, target_analysis: str
+        self,
+        task: str,
+        criteria: str,
+        scenario: str,
+        target_analysis: str,
+        strategy_name: Optional[str] = None,
+        effectiveness: Optional[str] = None,
     ) -> SubAgent:
         res: SubAgentInstructions = await a_generate(
             AgentTemplate.sub_agent_instructions(
@@ -239,6 +259,8 @@ class OrchestrationAgent:
             instructions=res.instructions,
             seed_turns=copy_turns(self.conversation),
         )
+        if strategy_name:
+            sub_agent.executor.adopt_by_name(strategy_name, effectiveness)
         self.sub_agents.append(sub_agent)
         self.round_sub_agents.append(sub_agent)
         return sub_agent
@@ -265,7 +287,9 @@ class OrchestrationAgent:
             if other is not sub_agent:
                 self.stop_sub_agent(other)
 
-    async def a_handle_escalation(self, sub_agent: SubAgent) -> str:
+    async def a_handle_escalation(
+        self, sub_agent: SubAgent
+    ) -> EscalationGuidance:
         siblings = [
             other
             for other in self.round_sub_agents
@@ -485,8 +509,8 @@ class OrchestrationAgent:
         sub_agent: SubAgent,
         patterns: Optional[str],
         peers: List[SubAgent],
-    ) -> str:
-        res: EscalationGuidance = await a_generate(
+    ) -> EscalationGuidance:
+        return await a_generate(
             AgentTemplate.escalation_guidance(
                 sub_agent.task,
                 sub_agent.scenario,
@@ -509,11 +533,11 @@ class OrchestrationAgent:
                     }
                     for peer in peers
                 ],
+                strategy_catalog(exclude=sub_agent.executor.used),
             ),
             EscalationGuidance,
             self.simulator_model,
         )
-        return res.guidance
 
     @staticmethod
     def _own_turns(
