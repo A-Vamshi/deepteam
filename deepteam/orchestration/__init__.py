@@ -1,5 +1,6 @@
 from .orchestration_agent import OrchestrationAgent
 from .sequential_agent import SequentialAgent
+from .agentic_red_team import agentic_red_team, a_agentic_red_team
 from .sub_agent import SubAgent
 from .judge import CriteriaJudge
 from .schema import CriteriaVerdict, SequentialVerdict
@@ -16,6 +17,8 @@ from .types import (
 __all__ = [
     "OrchestrationAgent",
     "SequentialAgent",
+    "agentic_red_team",
+    "a_agentic_red_team",
     "SubAgent",
     "CriteriaJudge",
     "CriteriaVerdict",
