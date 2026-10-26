@@ -31,7 +31,7 @@ def agentic_red_team(
     task: str,
     scenario: str,
     criteria: List[str],
-    mode: Literal["sequential", "parallel"] = "sequential",
+    mode: Literal["sequential", "parallel"] = "parallel",
     simulator_model: Optional[Union[str, DeepEvalBaseLLM]] = "gpt-4o-mini",
     judge_model: Optional[Union[str, DeepEvalBaseLLM]] = "gpt-4o",
     max_turns: Optional[int] = None,

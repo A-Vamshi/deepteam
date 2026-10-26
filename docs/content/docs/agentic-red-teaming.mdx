@@ -10,7 +10,7 @@ description: Run a goal-driven, adaptive red teaming campaign against your LLM w
 from deepteam import agentic_red_team
 from deepteam.test_case import RTTurn
 
-def model_callback(input: str) -> RTTurn:
+def model_callback(input: str, turns=None) -> RTTurn:
     # Replace this with your actual LLM application
     return RTTurn(role="assistant", content="Your agent's response here...")
 
@@ -53,20 +53,9 @@ Write each criterion so a judge can decide it from a **single reply**, e.g. _"Th
 
 `agentic_red_team` runs in one of two modes, and the difference that matters most is **where the conversation's memory lives**.
 
-### Sequential mode
-
-In `sequential` mode (the default), a single agent holds **one linear conversation** with your target. The target **keeps its own memory** — `deepteam` sends it one message at a time and never replays the history — so your callback only needs to accept the next input:
-
-```python title="sequential_callback.py"
-from deepteam.test_case import RTTurn
-
-def model_callback(input: str) -> RTTurn:
-    return RTTurn(role="assistant", content=your_app(input))
-```
-
 ### Parallel mode
 
-In `parallel` mode, an orchestration agent coordinates **several sub-agents at once**, each pursuing a different criterion. Because the orchestrator owns the conversation history and **replays it to the target on every turn**, your callback must accept a `turns` argument, exactly like the [model callback](/docs/red-teaming-introduction#model-callback) used by `red_team`:
+In `parallel` mode (the default), an orchestration agent coordinates **several sub-agents at once**, each pursuing a different criterion. Because the orchestrator owns the conversation history and **replays it to the target on every turn**, your callback must accept a `turns` argument, exactly like the [model callback](/docs/red-teaming-introduction#model-callback) used by `red_team`:
 
 ```python title="parallel_callback.py"
 from typing import List, Optional
@@ -77,25 +66,36 @@ def model_callback(input: str, turns: Optional[List[RTTurn]] = None) -> RTTurn:
     return RTTurn(role="assistant", content=your_app(input, history))
 ```
 
+### Sequential mode
+
+In `sequential` mode, a single agent holds **one linear conversation** with your target. The target **keeps its own memory** — `deepteam` sends it one message at a time and never replays the history — so your callback only needs to accept the next input:
+
+```python title="sequential_callback.py"
+from deepteam.test_case import RTTurn
+
+def model_callback(input: str) -> RTTurn:
+    return RTTurn(role="assistant", content=your_app(input))
+```
+
 :::caution
-If you pass `mode="parallel"` with a callback that only accepts a single argument, `agentic_red_team` raises a `ValueError`. A parallel run has to replay history, so the target cannot be left to manage its own memory. Use `mode="sequential"` for a stateful target.
+The default `parallel` mode replays history, so its callback **must** accept a `turns` argument; a single-argument callback raises a `ValueError`. Switch to `mode="sequential"` for a stateful target that keeps its own memory.
 :::
 
 ## How It Works
 
 Both modes share the same goal — meet every criterion — but they pursue it differently.
 
+### Parallel mode
+
+The orchestration agent begins with a short **recon** conversation to learn how the target behaves, then spawns **one sub-agent per unmet criterion** to attack in parallel. The first sub-agent to meet its criterion **wins the round**; its siblings stop, and the next round's sub-agents **continue the winner's conversation** against whatever criteria remain. Within a round, a sub-agent that stalls **escalates** to a strategy.
+
+<ImageDisplayer id="diagrams/in-house/red-teaming/agentic-red-teaming-parallel" />
+
 ### Sequential mode
 
 The sequential agent works in **phases**. It **opens** by probing all criteria at once over the first few turns, then a judge picks a single criterion to **focus** on. It pursues that focus turn by turn, and if progress **stalls**, it escalates to an advanced [strategy](#strategies) rather than rephrasing the same request. The run ends the moment every criterion is met, or when the turn budget is exhausted.
 
 <ImageDisplayer id="diagrams/in-house/red-teaming/agentic-red-teaming-sequential" />
-
-### Parallel mode
-
-The orchestration agent begins with a short **recon** conversation to learn how the target behaves, then spawns **one sub-agent per unmet criterion** to attack in parallel. The first sub-agent to meet its criterion **wins the round**; its siblings stop, and the next round's sub-agents **continue the winner's conversation** against whatever criteria remain. Within a round, a sub-agent that stalls **escalates** to a strategy, just like in sequential mode.
-
-<ImageDisplayer id="diagrams/in-house/red-teaming/agentic-red-teaming-parallel" />
 
 ## Running `agentic_red_team()`
 
@@ -124,7 +124,7 @@ There are **FOUR** mandatory and **SIX** optional arguments when calling `agenti
 - `task`: a string describing the campaign's objective.
 - `scenario`: a string describing the target and the guardrails it is under.
 - `criteria`: a list of strings, each an independently-judged success statement. The run succeeds when **all** of them are met.
-- [Optional] `mode`: either `"sequential"` or `"parallel"`. Defaulted to `"sequential"`.
+- [Optional] `mode`: either `"parallel"` or `"sequential"`. Defaulted to `"parallel"`.
 - [Optional] `simulator_model`: a string specifying which of OpenAI's GPT models to use, **OR** [any custom LLM model](https://deepeval.com/guides/guides-using-custom-llms) of type `DeepEvalBaseLLM`, to play the attacker. Defaulted to `"gpt-4o-mini"`.
 - [Optional] `judge_model`: a string specifying which of OpenAI's GPT models to use, **OR** [any custom LLM model](https://deepeval.com/guides/guides-using-custom-llms) of type `DeepEvalBaseLLM`, to decide whether each criterion is met. Defaulted to `"gpt-4o"`.
 - [Optional] `max_turns`: an integer turn budget before the run gives up. Defaulted to the agent's own default (**30** for sequential, **10** per round for parallel).
@@ -144,14 +144,14 @@ With `show_progress` enabled, a run prints a results table much like [`red_team`
 
 The two modes return different result objects, both exposing the same `score` and `met_criteria`:
 
-- **Sequential** returns a `SequentialResult` with `turns` (the full conversation), `verdicts` (one judge verdict per turn), and `met_criteria` as the list of criteria that were met.
 - **Parallel** returns an `OrchestrationResult` with `conversation` (the final winning conversation), `rounds` (per-round sub-agent reports), and `met_criteria` as records of **how** and in **which round** each criterion fell.
+- **Sequential** returns a `SequentialResult` with `turns` (the full conversation), `verdicts` (one judge verdict per turn), and `met_criteria` as the list of criteria that were met.
 
 ```python
-result = agentic_red_team(..., mode="sequential")
+result = agentic_red_team(...)  # parallel by default
 
 print(f"Breach rate: {result.score:.0%}")
-for turn in result.turns:
+for turn in result.conversation:
     print(f"{turn.role}: {turn.content}")
 ```
 
