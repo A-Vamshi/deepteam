@@ -128,6 +128,7 @@ class OrchestrationAgent:
         return OrchestrationResult(
             recon=self.recon_result,
             analysis=analysis,
+            criteria=self.criteria,
             rounds=self.rounds,
             met_criteria=self.met_criteria,
             conversation=self.conversation,

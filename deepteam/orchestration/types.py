@@ -40,9 +40,16 @@ class RoundResult(BaseModel):
 class OrchestrationResult(BaseModel):
     recon: ProgressionResult
     analysis: str
+    criteria: List[str] = []
     rounds: List[RoundResult] = []
     met_criteria: List[MetCriteria] = []
     conversation: List[RTTurn] = []
+
+    @property
+    def score(self) -> float:
+        if not self.criteria:
+            return 0.0
+        return len(self.met_criteria) / len(self.criteria)
 
 
 class SequentialResult(BaseModel):
@@ -50,7 +57,14 @@ class SequentialResult(BaseModel):
 
     task: str
     scenario: str
+    criteria: List[str] = []
     turns: List[RTTurn] = []
     verdicts: List[SequentialVerdict] = []
     met_criteria: List[str] = []
     error: Optional[Exception] = None
+
+    @property
+    def score(self) -> float:
+        if not self.criteria:
+            return 0.0
+        return len(self.met_criteria) / len(self.criteria)

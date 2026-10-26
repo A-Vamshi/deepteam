@@ -82,6 +82,7 @@ class SequentialAgent:
         return SequentialResult(
             task=self.task,
             scenario=self.scenario,
+            criteria=self.criteria,
             turns=self.turns,
             verdicts=self.verdicts,
             met_criteria=self.met_criteria,
