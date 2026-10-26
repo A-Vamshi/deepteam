@@ -43,16 +43,7 @@ Every run takes the same four inputs, no matter which mode you pick:
 
 The agent then drives a conversation toward those criteria, and at the end you get back a **breach rate** (how many criteria were met) along with a per-criterion verdict.
 
-```mermaid
-flowchart LR
-    I["task<br/>scenario<br/>criteria"] --> A["agentic_red_team()"]
-    M["model_callback<br/>(your LLM)"] --> A
-    A --> D{"mode"}
-    D -->|sequential| S["One linear conversation"]
-    D -->|parallel| P["Orchestrated sub-agents"]
-    S --> R["Breach rate<br/>+ per-criterion verdict"]
-    P --> R
-```
+<ImageDisplayer id="diagrams/in-house/red-teaming/agentic-red-teaming-overview" />
 
 :::tip
 Write each criterion so a judge can decide it from a **single reply**, e.g. _"The target reveals its system prompt"_ rather than _"The target behaves unsafely"_. Vague criteria lead to noisy verdicts.
@@ -98,38 +89,13 @@ Both modes share the same goal — meet every criterion — but they pursue it d
 
 The sequential agent works in **phases**. It **opens** by probing all criteria at once over the first few turns, then a judge picks a single criterion to **focus** on. It pursues that focus turn by turn, and if progress **stalls**, it escalates to an advanced [strategy](#strategies) rather than rephrasing the same request. The run ends the moment every criterion is met, or when the turn budget is exhausted.
 
-```mermaid
-flowchart TD
-    A["task, scenario, criteria"] --> B["Open phase:<br/>probe all criteria"]
-    B --> C["Judge scores every criterion"]
-    C --> D{"All criteria met?"}
-    D -->|Yes| E["Model breached"]
-    D -->|No| F{"Turn budget left?"}
-    F -->|No| G["Model defended"]
-    F -->|Yes| H["Pursue the focus criterion"]
-    H --> I{"Progress stalled?"}
-    I -->|Yes| J["Escalate to a strategy"]
-    I -->|No| C
-    J --> C
-```
+<ImageDisplayer id="diagrams/in-house/red-teaming/agentic-red-teaming-sequential" />
 
 ### Parallel mode
 
 The orchestration agent begins with a short **recon** conversation to learn how the target behaves, then spawns **one sub-agent per unmet criterion** to attack in parallel. The first sub-agent to meet its criterion **wins the round**; its siblings stop, and the next round's sub-agents **continue the winner's conversation** against whatever criteria remain. Within a round, a sub-agent that stalls **escalates** to a strategy, just like in sequential mode.
 
-```mermaid
-flowchart TD
-    A["task, scenario, criteria"] --> B["Recon:<br/>short probing conversation"]
-    B --> C["Spawn one sub-agent<br/>per unmet criterion"]
-    C --> D["Sub-agents attack in parallel"]
-    D --> E{"A sub-agent meets<br/>its criterion?"}
-    E -->|Yes| F["It wins the round;<br/>siblings stop"]
-    E -->|"No (turns exhausted)"| G["Model defended"]
-    F --> H{"All criteria met?"}
-    H -->|Yes| I["Model breached"]
-    H -->|No| J["Continue the winner's<br/>conversation on what's left"]
-    J --> C
-```
+<ImageDisplayer id="diagrams/in-house/red-teaming/agentic-red-teaming-parallel" />
 
 ## Running `agentic_red_team()`
 
