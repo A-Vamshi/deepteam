@@ -24,6 +24,9 @@ class StubAgent:
     async def a_run(self):
         return f"result-from-{type(self).__name__}"
 
+    def run(self):
+        return f"sync-result-from-{type(self).__name__}"
+
 
 class StubSequential(StubAgent):
     pass
@@ -103,5 +106,19 @@ def test_max_turns_omitted_uses_agent_default(stubs):
 def test_progress_bar_runs_without_error(stubs):
     result = agentic_red_team(
         turns_callback, "t", "s", ["c1"], show_progress=True
+    )
+    assert result == "result-from-StubSequential"
+
+
+def test_async_mode_false_runs_synchronously(stubs):
+    result = agentic_red_team(
+        turns_callback, "t", "s", ["c1"], async_mode=False, show_progress=False
+    )
+    assert result == "sync-result-from-StubSequential"
+
+
+def test_async_mode_true_is_the_default(stubs):
+    result = agentic_red_team(
+        turns_callback, "t", "s", ["c1"], show_progress=False
     )
     assert result == "result-from-StubSequential"

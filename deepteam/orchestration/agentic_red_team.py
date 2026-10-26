@@ -1,6 +1,6 @@
 import asyncio
 import inspect
-from typing import List, Optional, Union
+from typing import List, Literal, Optional, Union
 
 from deepeval.models import DeepEvalBaseLLM
 from deepeval.utils import get_or_create_event_loop
@@ -31,39 +31,49 @@ def agentic_red_team(
     task: str,
     scenario: str,
     criteria: List[str],
-    mode: str = "sequential",
+    mode: Literal["sequential", "parallel"] = "sequential",
     simulator_model: Optional[Union[str, DeepEvalBaseLLM]] = "gpt-4o-mini",
     judge_model: Optional[Union[str, DeepEvalBaseLLM]] = "gpt-4o",
     max_turns: Optional[int] = None,
+    async_mode: bool = True,
     show_progress: bool = True,
 ) -> Union[OrchestrationResult, SequentialResult]:
-    loop = get_or_create_event_loop()
-    return loop.run_until_complete(
-        a_agentic_red_team(
-            model_callback,
-            task,
-            scenario,
-            criteria,
-            mode,
-            simulator_model,
-            judge_model,
-            max_turns,
-            show_progress,
-        )
+    agent, label, status = _prepare(
+        model_callback,
+        task,
+        scenario,
+        criteria,
+        mode,
+        simulator_model,
+        judge_model,
+        max_turns,
     )
 
+    if async_mode:
+        loop = get_or_create_event_loop()
+        result = loop.run_until_complete(
+            _a_run_with_progress(agent, label, status, show_progress)
+        )
+    else:
+        result = agent.run()
 
-async def a_agentic_red_team(
-    model_callback: CallbackType,
-    task: str,
-    scenario: str,
-    criteria: List[str],
-    mode: str = "sequential",
-    simulator_model: Optional[Union[str, DeepEvalBaseLLM]] = "gpt-4o-mini",
-    judge_model: Optional[Union[str, DeepEvalBaseLLM]] = "gpt-4o",
-    max_turns: Optional[int] = None,
-    show_progress: bool = True,
-) -> Union[OrchestrationResult, SequentialResult]:
+    if show_progress and isinstance(
+        result, (OrchestrationResult, SequentialResult)
+    ):
+        _print_result_table(result, label)
+    return result
+
+
+def _prepare(
+    model_callback,
+    task,
+    scenario,
+    criteria,
+    mode,
+    simulator_model,
+    judge_model,
+    max_turns,
+):
     if mode not in ("sequential", "parallel"):
         raise ValueError("'mode' must be 'sequential' or 'parallel'.")
 
@@ -108,12 +118,7 @@ async def a_agentic_red_team(
                 f"{len(agent.met_criteria)}/{len(agent.criteria)} met"
             )
 
-    result = await _a_run_with_progress(agent, label, status, show_progress)
-    if show_progress and isinstance(
-        result, (OrchestrationResult, SequentialResult)
-    ):
-        _print_result_table(result, label)
-    return result
+    return agent, label, status
 
 
 def _met_lookup(result):
