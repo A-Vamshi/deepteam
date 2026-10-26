@@ -170,17 +170,3 @@ The built-in strategies are:
 :::note
 Strategy selection is fully automatic — there's nothing to configure. The catalog is also **extensible**: adding a strategy to the registry makes it available to the agent without any other change.
 :::
-
-## Async mode
-
-Like [`red_team`](/docs/red-teaming-introduction#penetration-test-with-red_team), `agentic_red_team` runs on an async engine by default (`async_mode=True`), which is what drives the live progress bar. Set `async_mode=False` to run the campaign synchronously instead, for fully deterministic, step-by-step execution. Either way the call **blocks** and returns the same result object.
-
-```python title="main.py"
-result = agentic_red_team(
-    model_callback=model_callback,
-    task=task,
-    scenario=scenario,
-    criteria=criteria,
-    async_mode=False,
-)
-```
