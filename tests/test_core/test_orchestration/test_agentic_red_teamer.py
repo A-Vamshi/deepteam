@@ -2,10 +2,10 @@ import importlib
 
 import pytest
 
-from deepteam.orchestration import agentic_red_team
+from deepteam.orchestration import AgenticRedTeamer
 from deepteam.test_case.test_case import RTTurn
 
-module = importlib.import_module("deepteam.orchestration.agentic_red_team")
+module = importlib.import_module("deepteam.orchestration.agentic_red_teamer")
 
 
 class StubAgent:
@@ -53,83 +53,81 @@ def no_turns_callback(message):
 
 
 def test_sequential_mode_uses_the_sequential_agent(stubs):
-    result = agentic_red_team(
-        turns_callback, "t", "s", ["c1", "c2"], mode="sequential",
-        show_progress=False,
+    teamer = AgenticRedTeamer(
+        "t", "s", ["c1", "c2"], mode="sequential", show_progress=False
     )
+    result = teamer.run(turns_callback)
     assert result == "result-from-StubSequential"
     assert StubSequential.last.kwargs["criteria"] == ["c1", "c2"]
     assert StubOrchestration.last is None
 
 
 def test_parallel_mode_uses_the_orchestration_agent(stubs):
-    result = agentic_red_team(
-        turns_callback, "t", "s", ["c1"], mode="parallel", show_progress=False
+    teamer = AgenticRedTeamer(
+        "t", "s", ["c1"], mode="parallel", show_progress=False
     )
+    result = teamer.run(turns_callback)
     assert result == "result-from-StubOrchestration"
     assert StubOrchestration.last is not None
 
 
 def test_parallel_is_the_default_mode(stubs):
-    result = agentic_red_team(
-        turns_callback, "t", "s", ["c1", "c2"], show_progress=False
-    )
+    teamer = AgenticRedTeamer("t", "s", ["c1", "c2"], show_progress=False)
+    result = teamer.run(turns_callback)
     assert result == "result-from-StubOrchestration"
     assert StubOrchestration.last.kwargs["criteria"] == ["c1", "c2"]
     assert StubSequential.last is None
 
 
 def test_parallel_requires_a_turns_accepting_callback(stubs):
+    teamer = AgenticRedTeamer(
+        "t", "s", ["c1"], mode="parallel", show_progress=False
+    )
     with pytest.raises(ValueError, match="turns"):
-        agentic_red_team(
-            no_turns_callback, "t", "s", ["c1"], mode="parallel",
-            show_progress=False,
-        )
+        teamer.run(no_turns_callback)
 
 
 def test_sequential_accepts_a_single_arg_callback(stubs):
-    result = agentic_red_team(
-        no_turns_callback, "t", "s", ["c1"], mode="sequential",
-        show_progress=False,
+    teamer = AgenticRedTeamer(
+        "t", "s", ["c1"], mode="sequential", show_progress=False
     )
+    result = teamer.run(no_turns_callback)
     assert result == "result-from-StubSequential"
 
 
-def test_invalid_mode_raises(stubs):
+def test_invalid_mode_raises_at_construction(stubs):
     with pytest.raises(ValueError, match="mode"):
-        agentic_red_team(
-            turns_callback, "t", "s", ["c1"], mode="nope", show_progress=False
-        )
+        AgenticRedTeamer("t", "s", ["c1"], mode="nope", show_progress=False)
 
 
 def test_max_turns_is_passed_through(stubs):
-    agentic_red_team(
-        turns_callback, "t", "s", ["c1"], max_turns=7, show_progress=False
+    teamer = AgenticRedTeamer(
+        "t", "s", ["c1"], max_turns=7, show_progress=False
     )
+    teamer.run(turns_callback)
     assert StubOrchestration.last.kwargs["max_turns"] == 7
 
 
 def test_max_turns_omitted_uses_agent_default(stubs):
-    agentic_red_team(turns_callback, "t", "s", ["c1"], show_progress=False)
+    AgenticRedTeamer("t", "s", ["c1"], show_progress=False).run(turns_callback)
     assert "max_turns" not in StubOrchestration.last.kwargs
 
 
 def test_progress_bar_runs_without_error(stubs):
-    result = agentic_red_team(
-        turns_callback, "t", "s", ["c1"], show_progress=True
-    )
+    teamer = AgenticRedTeamer("t", "s", ["c1"], show_progress=True)
+    result = teamer.run(turns_callback)
     assert result == "result-from-StubOrchestration"
 
 
 def test_async_mode_false_runs_synchronously(stubs):
-    result = agentic_red_team(
-        turns_callback, "t", "s", ["c1"], async_mode=False, show_progress=False
+    teamer = AgenticRedTeamer(
+        "t", "s", ["c1"], async_mode=False, show_progress=False
     )
+    result = teamer.run(turns_callback)
     assert result == "sync-result-from-StubOrchestration"
 
 
 def test_async_mode_true_is_the_default(stubs):
-    result = agentic_red_team(
-        turns_callback, "t", "s", ["c1"], show_progress=False
-    )
+    teamer = AgenticRedTeamer("t", "s", ["c1"], show_progress=False)
+    result = teamer.run(turns_callback)
     assert result == "result-from-StubOrchestration"
