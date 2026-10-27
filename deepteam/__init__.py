@@ -4,7 +4,7 @@ import re
 
 # Optionally add telemetry
 from deepteam.red_team import red_team
-from deepteam.orchestration import agentic_red_team
+from deepteam.orchestration import AgenticRedTeamer
 
 # Import guardrails for production LLM safety
 from deepteam.guardrails import (
@@ -14,7 +14,7 @@ from deepteam._version import __version__
 
 __all__ = [
     "red_team",
-    "agentic_red_team",
+    "AgenticRedTeamer",
     "Guardrails",
     "__version__",
 ]

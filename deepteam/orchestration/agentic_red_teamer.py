@@ -26,99 +26,96 @@ def _accepts_turns(model_callback: CallbackType) -> bool:
     )
 
 
-def agentic_red_team(
-    model_callback: CallbackType,
-    task: str,
-    scenario: str,
-    criteria: List[str],
-    mode: Literal["sequential", "parallel"] = "parallel",
-    simulator_model: Optional[Union[str, DeepEvalBaseLLM]] = "gpt-4o-mini",
-    judge_model: Optional[Union[str, DeepEvalBaseLLM]] = "gpt-4o",
-    max_turns: Optional[int] = None,
-    async_mode: bool = True,
-    show_progress: bool = True,
-) -> Union[OrchestrationResult, SequentialResult]:
-    agent, label, status = _prepare(
-        model_callback,
-        task,
-        scenario,
-        criteria,
-        mode,
-        simulator_model,
-        judge_model,
-        max_turns,
-    )
-
-    if async_mode:
-        loop = get_or_create_event_loop()
-        result = loop.run_until_complete(
-            _a_run_with_progress(agent, label, status, show_progress)
-        )
-    else:
-        result = agent.run()
-
-    if show_progress and isinstance(
-        result, (OrchestrationResult, SequentialResult)
+class AgenticRedTeamer:
+    def __init__(
+        self,
+        task: str,
+        scenario: str,
+        criteria: List[str],
+        mode: Literal["sequential", "parallel"] = "parallel",
+        simulator_model: Optional[Union[str, DeepEvalBaseLLM]] = "gpt-4o-mini",
+        judge_model: Optional[Union[str, DeepEvalBaseLLM]] = "gpt-4o",
+        max_turns: Optional[int] = None,
+        async_mode: bool = True,
+        show_progress: bool = True,
     ):
-        _print_result_table(result, label)
-    return result
+        if mode not in ("sequential", "parallel"):
+            raise ValueError("'mode' must be 'sequential' or 'parallel'.")
+        self.task = task
+        self.scenario = scenario
+        self.criteria = criteria
+        self.mode = mode
+        self.simulator_model = simulator_model
+        self.judge_model = judge_model
+        self.max_turns = max_turns
+        self.async_mode = async_mode
+        self.show_progress = show_progress
 
+    def run(
+        self, model_callback: CallbackType
+    ) -> Union[OrchestrationResult, SequentialResult]:
+        agent, label, status = self._build(model_callback)
 
-def _prepare(
-    model_callback,
-    task,
-    scenario,
-    criteria,
-    mode,
-    simulator_model,
-    judge_model,
-    max_turns,
-):
-    if mode not in ("sequential", "parallel"):
-        raise ValueError("'mode' must be 'sequential' or 'parallel'.")
-
-    kwargs = dict(
-        task=task,
-        scenario=scenario,
-        criteria=criteria,
-        model_callback=model_callback,
-        simulator_model=simulator_model,
-        judge_model=judge_model,
-    )
-    if max_turns is not None:
-        kwargs["max_turns"] = max_turns
-
-    if mode == "parallel":
-        if not _accepts_turns(model_callback):
-            raise ValueError(
-                "Parallel mode runs several conversations at once and replays "
-                "the history to the target each turn, so model_callback must "
-                "accept a 'turns' argument, e.g. def callback(input, "
-                "turns=None). Use mode='sequential' for a target that keeps "
-                "its own memory."
+        if self.async_mode:
+            loop = get_or_create_event_loop()
+            result = loop.run_until_complete(
+                _a_run_with_progress(agent, label, status, self.show_progress)
             )
-        agent = OrchestrationAgent(**kwargs)
-        label = "Agentic red team (parallel)"
+        else:
+            result = agent.run()
 
-        def status():
-            phase = (
-                "recon"
-                if agent.recon_result is None
-                else f"round {len(agent.rounds) + 1}"
-            )
-            return f"{phase} · {len(agent.met_criteria)}/{len(agent.criteria)} met"
+        if self.show_progress and isinstance(
+            result, (OrchestrationResult, SequentialResult)
+        ):
+            _print_result_table(result, label)
+        return result
 
-    else:
-        agent = SequentialAgent(**kwargs)
-        label = "Agentic red team (sequential)"
+    def _build(self, model_callback):
+        kwargs = dict(
+            task=self.task,
+            scenario=self.scenario,
+            criteria=self.criteria,
+            model_callback=model_callback,
+            simulator_model=self.simulator_model,
+            judge_model=self.judge_model,
+        )
+        if self.max_turns is not None:
+            kwargs["max_turns"] = self.max_turns
 
-        def status():
-            return (
-                f"turn {len(agent.verdicts)} · "
-                f"{len(agent.met_criteria)}/{len(agent.criteria)} met"
-            )
+        if self.mode == "parallel":
+            if not _accepts_turns(model_callback):
+                raise ValueError(
+                    "Parallel mode runs several conversations at once and "
+                    "replays the history to the target each turn, so "
+                    "model_callback must accept a 'turns' argument, e.g. def "
+                    "callback(input, turns=None). Use mode='sequential' for a "
+                    "target that keeps its own memory."
+                )
+            agent = OrchestrationAgent(**kwargs)
+            label = "Agentic red team (parallel)"
 
-    return agent, label, status
+            def status():
+                phase = (
+                    "recon"
+                    if agent.recon_result is None
+                    else f"round {len(agent.rounds) + 1}"
+                )
+                return (
+                    f"{phase} · "
+                    f"{len(agent.met_criteria)}/{len(agent.criteria)} met"
+                )
+
+        else:
+            agent = SequentialAgent(**kwargs)
+            label = "Agentic red team (sequential)"
+
+            def status():
+                return (
+                    f"turn {len(agent.verdicts)} · "
+                    f"{len(agent.met_criteria)}/{len(agent.criteria)} met"
+                )
+
+        return agent, label, status
 
 
 def _met_lookup(result):
